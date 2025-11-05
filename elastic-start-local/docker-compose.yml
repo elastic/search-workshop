@@ -1,6 +1,5 @@
 services:
   elasticsearch:
-    restart: 'always'
     image: docker.elastic.co/elasticsearch/elasticsearch:${ES_LOCAL_VERSION}
     container_name: ${ES_LOCAL_CONTAINER_NAME}
     volumes:
@@ -54,7 +53,6 @@ services:
       '
 
   kibana:
-    restart: 'always'
     depends_on:
       kibana_settings:
         condition: service_completed_successfully
