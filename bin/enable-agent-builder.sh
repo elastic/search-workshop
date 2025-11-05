@@ -6,6 +6,6 @@ curl -X PUT "http://localhost:5601/api/saved_objects/config/9.2.0" \
   -u elastic:elastic \
   -d '{
     "attributes": {
-      "theme:darkMode": true
+      "agentBuilder:enabled": true
     }
   }'
