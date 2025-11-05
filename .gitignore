@@ -4,7 +4,6 @@
 # Ignore data loads
 /data/flights/*
 /data/flights-*
-/contracts/airline_contracts
 
 # Custom
 .DS_Store
