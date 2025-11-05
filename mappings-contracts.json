@@ -1,0 +1,84 @@
+{
+  "mappings": {
+    "properties": {
+      "airline": {
+        "type": "keyword"
+      },
+      "attachment": {
+        "properties": {
+          "author": {
+            "type": "keyword"
+          },
+          "content": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "content_length": {
+            "type": "long"
+          },
+          "content_type": {
+            "type": "keyword"
+          },
+          "creator_tool": {
+            "type": "keyword"
+          },
+          "date": {
+            "type": "date"
+          },
+          "description": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "format": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword",
+                "ignore_above": 256
+              }
+            }
+          },
+          "keywords": {
+            "type": "text"
+          },
+          "language": {
+            "type": "keyword"
+          },
+          "metadata_date": {
+            "type": "date"
+          },
+          "modified": {
+            "type": "date"
+          },
+          "title": {
+            "type": "text"
+          }
+        }
+      },
+      "filename": {
+        "type": "keyword"
+      },
+      "semantic_content": {
+        "type": "semantic_text",
+        "inference_id": ".elser-2-elastic",
+        "model_settings": {
+          "service": "elastic",
+          "task_type": "sparse_embedding"
+        }
+      },
+      "upload_date": {
+        "type": "date"
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+# Config files
+# /config/elasticsearch.yml
+
+# Ignore data loads
+/data/flights/*
+/data/flights-*
+
+# Custom
+.DS_Store
+*.swp
+*.swo
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.python-version

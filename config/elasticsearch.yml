@@ -1,0 +1,14 @@
+# Fill in the connection details for your Elasticsearch cluster.
+# The script reads this file by default.
+endpoint: "http://localhost:9200"
+
+# Provide either user/password or api_key.
+user: "elastic"
+password: "elastic"
+api_key: ""
+
+# Optional custom headers to include with every request.
+headers: { }
+
+# Set to false to skip SSL verification (not recommended in production).
+ssl_verify: false

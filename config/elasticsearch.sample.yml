@@ -1,0 +1,15 @@
+# Fill in the connection details for your Elasticsearch cluster.
+# The script reads this file by default.
+#endpoint: "https://elasticsearch.corp-intranet.com"
+endpoint: "https://xxx.gcp.cloud.es.io"
+
+# Provide either user/password or api_key.
+user: "elastic"
+password: "password"
+api_key: ""
+
+# Optional custom headers to include with every request.
+headers: {}
+
+# Set to false to skip SSL verification (not recommended in production).
+ssl_verify: false

@@ -1,0 +1,93 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "index.refresh_interval": "5s"
+  },
+  "mappings": {
+    "properties": {
+      "@timestamp": {
+        "type": "date",
+        "format": "yyyy-MM-dd"
+      },
+      "FlightID": {
+        "type": "keyword"
+      },
+      "Reporting_Airline": {
+        "type": "keyword"
+      },
+      "Tail_Number": {
+        "type": "keyword"
+      },
+      "Flight_Number": {
+        "type": "keyword"
+      },
+      "Origin": {
+        "type": "keyword"
+      },
+      "Dest": {
+        "type": "keyword"
+      },
+      "CRSDepTimeLocal": {
+        "type": "integer"
+      },
+      "DepDelayMin": {
+        "type": "integer"
+      },
+      "TaxiOutMin": {
+        "type": "integer"
+      },
+      "TaxiInMin": {
+        "type": "integer"
+      },
+      "CRSArrTimeLocal": {
+        "type": "integer"
+      },
+      "ArrDelayMin": {
+        "type": "integer"
+      },
+      "Cancelled": {
+        "type": "boolean"
+      },
+      "CancellationCode": {
+        "type": "keyword"
+      },
+      "Diverted": {
+        "type": "boolean"
+      },
+      "ActualElapsedTimeMin": {
+        "type": "integer"
+      },
+      "AirTimeMin": {
+        "type": "integer"
+      },
+      "Flights": {
+        "type": "integer"
+      },
+      "DistanceMiles": {
+        "type": "integer"
+      },
+      "CarrierDelayMin": {
+        "type": "integer"
+      },
+      "WeatherDelayMin": {
+        "type": "integer"
+      },
+      "NASDelayMin": {
+        "type": "integer"
+      },
+      "SecurityDelayMin": {
+        "type": "integer"
+      },
+      "LateAircraftDelayMin": {
+        "type": "integer"
+      },
+      "OriginLocation": {
+        "type": "geo_point"
+      },
+      "DestLocation": {
+        "type": "geo_point"
+      }
+    }
+  }
+}
