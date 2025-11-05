@@ -4,17 +4,24 @@
 # Ignore data loads
 /data/flights/*
 /data/flights-*
+/contracts/airline_contracts
 
 # Custom
 .DS_Store
 *.swp
 *.swo
+.env
 
 # Python artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
+venv/
 .venv/
+env/
 .pytest_cache/
 .mypy_cache/
 .python-version
+*.egg
+dist/
+build/
