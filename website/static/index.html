@@ -12,60 +12,53 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- Theme Toggle - Top Right -->
+    <button id="themeToggle" class="btn btn-outline-primary theme-toggle" type="button" title="Toggle dark mode">
+        <i class="bi bi-moon-fill" id="themeIcon"></i>
+    </button>
+    
     <div class="container my-5">
         <!-- Header -->
         <div class="text-center mb-5">
-            <div class="d-flex justify-content-between align-items-start mb-3">
-                <div class="flex-grow-1"></div>
-                <div class="flex-grow-1">
-                    <h1 class="display-4 fw-normal mb-2" id="logo" style="cursor: pointer;">
-                        <i class="bi bi-search"></i> <span class="text-primary">AI</span><span class="text-dark">R</span> Search
-                    </h1>
-                    <p class="subtitle-text">Search across Flights, Airlines, and Contracts</p>
-                </div>
-                <div class="flex-grow-1 d-flex justify-content-end">
-                    <button id="themeToggle" class="btn btn-outline-secondary" type="button" title="Toggle dark mode">
-                        <i class="bi bi-moon-fill" id="themeIcon"></i>
-                    </button>
-                </div>
-            </div>
+            <h1 class="display-4 fw-normal mb-1" id="logo" style="cursor: pointer;">
+                <i class="bi bi-search"></i> <span class="text-primary">AI</span><span class="text-dark">R</span> Search
+            </h1>
+            <p class="subtitle-text mb-0">Search across Flights, Airlines, and Contracts</p>
         </div>
         
         <!-- Search Section -->
-        <div class="card shadow-sm mb-4">
-            <div class="card-body p-4">
-                <!-- Search Input -->
-                <div class="input-group input-group-lg mb-3">
-                    <input 
-                        type="text" 
-                        id="searchInput" 
-                        class="form-control" 
-                        placeholder="Search..."
-                        autocomplete="off"
-                    >
-                    <button id="searchButton" class="btn btn-primary" type="button">
-                        <i class="bi bi-search"></i>
-                    </button>
-                </div>
-                
-                <!-- Search Controls -->
-                <div class="d-flex justify-content-between align-items-end gap-4">
-                    <div class="flex-shrink-0">
-                        <label class="form-label fw-semibold mb-1 small d-block">Search Mode:</label>
-                        <div class="btn-group" role="group">
-                            <button type="button" class="btn btn-outline-primary mode-btn active" data-mode="bm25">BM25</button>
-                            <button type="button" class="btn btn-outline-primary mode-btn" data-mode="semantic">Semantic</button>
-                            <button type="button" class="btn btn-outline-primary mode-btn" data-mode="ai">AI Agent</button>
-                        </div>
+        <div class="mb-4">
+            <!-- Search Input -->
+            <div class="input-group input-group-lg mb-3">
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    class="form-control" 
+                    placeholder="Search..."
+                    autocomplete="off"
+                >
+                <button id="searchButton" class="btn btn-primary" type="button">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+            
+            <!-- Search Controls -->
+            <div class="d-flex justify-content-between align-items-end gap-4">
+                <div class="flex-shrink-0">
+                    <label class="form-label fw-semibold mb-1 small d-block">Search Mode:</label>
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-outline-primary mode-btn active" data-mode="bm25">BM25</button>
+                        <button type="button" class="btn btn-outline-primary mode-btn" data-mode="semantic">Semantic</button>
+                        <button type="button" class="btn btn-outline-primary mode-btn" data-mode="ai">AI Agent</button>
                     </div>
-                    <div class="flex-shrink-0 ms-auto text-end">
-                        <label class="form-label fw-semibold mb-1 small d-block">Index:</label>
-                        <div class="btn-group" role="group">
-                            <button type="button" class="btn btn-outline-primary index-btn active" data-index="all">All Indices</button>
-                            <button type="button" class="btn btn-outline-primary index-btn" data-index="flights">Flights</button>
-                            <button type="button" class="btn btn-outline-primary index-btn" data-index="airlines">Airlines</button>
-                            <button type="button" class="btn btn-outline-primary index-btn" data-index="contracts">Contracts</button>
-                        </div>
+                </div>
+                <div class="flex-shrink-0 ms-auto text-end">
+                    <label class="form-label fw-semibold mb-1 small d-block">Index:</label>
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-outline-primary index-btn active" data-index="all">All Indices</button>
+                        <button type="button" class="btn btn-outline-primary index-btn" data-index="flights">Flights</button>
+                        <button type="button" class="btn btn-outline-primary index-btn" data-index="airlines">Airlines</button>
+                        <button type="button" class="btn btn-outline-primary index-btn" data-index="contracts">Contracts</button>
                     </div>
                 </div>
             </div>

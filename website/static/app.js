@@ -281,10 +281,22 @@ function displayResults(data) {
             return snippet;
         }).join(' ... ');
         
-        // Add index badge with Bootstrap styling
-        const badgeClass = indexName === 'flights' ? 'bg-primary' : 
-                          indexName === 'airlines' ? 'bg-info' : 'bg-warning';
-        const indexBadge = `<span class="badge ${badgeClass} text-uppercase">${indexName}</span>`;
+        // Add index badge with consistent styling
+        const badgeClass = indexName === 'flights'
+            ? 'badge-index badge-flights'
+            : indexName === 'airlines'
+                ? 'badge-index badge-airlines'
+                : 'badge-index badge-contracts';
+        const badgeLabelMap = {
+            flights: 'Flights',
+            airlines: 'Airlines',
+            contracts: 'Contracts'
+        };
+        const badgeLabel = badgeLabelMap[indexName] ||
+            indexName
+                .replace(/[_-]+/g, ' ')
+                .replace(/\b\w/g, (char) => char.toUpperCase());
+        const indexBadge = `<span class="badge ${badgeClass}">${badgeLabel}</span>`;
         
         // Special formatting for airlines - two field format
         if (indexName === 'airlines') {

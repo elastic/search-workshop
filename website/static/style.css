@@ -1,49 +1,72 @@
 /* Custom styles to complement Bootstrap */
 
-body {
-    background-color: #f8f9fa;
-    min-height: 100vh;
-    transition: background-color 0.3s ease, color 0.3s ease;
+:root {
+    --color-bg: #f5f7fb;
+    --color-text: #1f2733;
+    --color-muted: #6b7280;
+    --color-border: #d6dce7;
+    --color-primary: #2563eb;
+    --color-primary-emphasis: #1d4ed8;
+    --color-primary-soft: #e4ecff;
+    --color-primary-soft-strong: rgba(37, 99, 235, 0.12);
+    --color-primary-soft-border: rgba(37, 99, 235, 0.24);
+    --color-highlight: #eaf2ff;
+    --color-primary-focus-ring: rgba(37, 99, 235, 0.25);
+    --color-accent-gradient-start: #2563eb;
+    --color-accent-gradient-end: #1d4ed8;
 }
 
-/* Dark mode support */
-[data-bs-theme="dark"] body {
-    background-color: #212529;
-    color: #e9ecef;
+[data-bs-theme="dark"] {
+    --color-bg: #0f172a;
+    --color-text: #e2e8f0;
+    --color-muted: #94a3b8;
+    --color-border: #374151;
+    --color-primary: #60a5fa;
+    --color-primary-emphasis: #3b82f6;
+    --color-primary-soft: rgba(96, 165, 250, 0.16);
+    --color-primary-soft-strong: rgba(96, 165, 250, 0.22);
+    --color-primary-soft-border: rgba(96, 165, 250, 0.32);
+    --color-highlight: rgba(96, 165, 250, 0.32);
+    --color-primary-focus-ring: rgba(96, 165, 250, 0.35);
+    --color-accent-gradient-start: #60a5fa;
+    --color-accent-gradient-end: #2563eb;
+}
+
+body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    min-height: 100vh;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    --bs-border-color: var(--color-border);
+    --bs-body-color: var(--color-text);
+    --bs-body-bg: var(--color-bg);
+    --bs-link-color: var(--color-primary);
+    --bs-link-hover-color: var(--color-primary-emphasis);
 }
 
 /* Search input styling - blue border to attract attention */
 #searchInput {
-    border-color: #0d6efd !important; /* Bootstrap primary blue */
+    border-color: var(--color-primary) !important;
     border-width: 2px;
 }
 
 #searchInput:focus {
-    border-color: #0d6efd !important;
-    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    border-color: var(--color-primary) !important;
+    box-shadow: 0 0 0 0.25rem var(--color-primary-focus-ring);
 }
 
 /* Search input placeholder styling */
 #searchInput::placeholder {
-    color: #adb5bd !important; /* Darker gray for placeholder */
+    color: var(--color-muted) !important;
     opacity: 1;
-}
-
-[data-bs-theme="dark"] #searchInput::placeholder {
-    color: #868e96 !important; /* Darker gray for dark mode */
 }
 
 /* Result highlight styling */
 .result-highlight {
-    background: #fff59d;
+    background: var(--color-highlight);
     padding: 0 2px;
     font-weight: 500;
     border-radius: 2px;
-}
-
-[data-bs-theme="dark"] .result-highlight {
-    background: #ffc107;
-    color: #000;
 }
 
 /* Result item styling */
@@ -68,9 +91,77 @@ body {
     font-weight: 600;
 }
 
+.badge-index {
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+}
+
+.badge-flights {
+    background: var(--color-primary);
+    color: #fff;
+}
+
+.badge-airlines {
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+    border-color: var(--color-primary-soft-border);
+}
+
+.badge-contracts {
+    background: var(--color-primary-soft-strong);
+    color: var(--color-primary);
+    border-color: var(--color-primary-soft-border);
+}
+
+.badge-airlines,
+.badge-contracts {
+    backdrop-filter: blur(2px);
+}
+
 /* Button group active state */
 .btn-group .btn.active {
     z-index: 1;
+}
+
+.btn-primary {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+    background-color: var(--color-primary-emphasis);
+    border-color: var(--color-primary-emphasis);
+}
+
+.btn-primary:focus,
+.btn-primary:focus-visible,
+.btn-outline-primary:focus,
+.btn-outline-primary:focus-visible {
+    box-shadow: 0 0 0 0.25rem var(--color-primary-focus-ring);
+}
+
+.btn-outline-primary {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
+.btn-check:checked + .btn-outline-primary,
+.btn-check:active + .btn-outline-primary,
+.btn-outline-primary.active,
+.btn-outline-primary.dropdown-toggle.show,
+.btn-outline-primary:active {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
 }
 
 /* Loading spinner animation */
@@ -81,7 +172,7 @@ body {
 
 /* AIR Search branding - AI in different color with gradient effect */
 h1 .text-primary {
-    background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%);
+    background: linear-gradient(135deg, var(--color-accent-gradient-start) 0%, var(--color-accent-gradient-end) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -89,13 +180,9 @@ h1 .text-primary {
 }
 
 h1 .text-dark {
-    color: #212529 !important;
+    color: var(--color-text) !important;
     font-size: 0.85em;
     vertical-align: baseline;
-}
-
-[data-bs-theme="dark"] h1 .text-dark {
-    color: #e9ecef !important;
 }
 
 /* Logo hover effect */
@@ -115,11 +202,7 @@ h1 .text-dark {
 
 /* Subtle subtitle text */
 .subtitle-text {
-    color: #adb5bd !important; /* Lighter gray than Bootstrap's text-muted */
-}
-
-[data-bs-theme="dark"] .subtitle-text {
-    color: #6c757d !important; /* Slightly lighter gray for dark mode */
+    color: var(--color-muted) !important;
 }
 
 /* Smooth transitions for theme changes */
@@ -133,8 +216,21 @@ body,
     transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
 }
 
+/* Theme toggle - positioned top right */
+.theme-toggle {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1000;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
+    .theme-toggle {
+        top: 0.5rem;
+        right: 0.5rem;
+    }
+    
     .display-4 {
         font-size: 2rem;
     }
@@ -152,7 +248,7 @@ body,
         margin-bottom: 0.25rem;
     }
     
-    /* Adjust header layout on mobile */
+    /* Preserve header flexibility on mobile */
     .d-flex.justify-content-between.align-items-start {
         flex-direction: column;
         align-items: center !important;
@@ -170,4 +266,12 @@ body,
         padding-left: 1rem;
         padding-right: 1rem;
     }
+}
+
+.text-muted {
+    color: var(--color-muted) !important;
+}
+
+.spinner-border {
+    color: var(--color-primary) !important;
 }

@@ -4,28 +4,89 @@ Combined script to setup pipeline, create index, and ingest PDFs.
 Runs all steps in sequence for easy deployment.
 """
 
-import os
 import sys
 import argparse
 import requests
 import base64
 import json
 from pathlib import Path
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
-ES_ENDPOINT = os.getenv('ES_ENDPOINT')
-API_KEY = os.getenv('ES_API_KEY')
-ES_INDEX = os.getenv('ES_INDEX', 'contracts')
-ELSER_MODEL = os.getenv('ELSER_MODEL', '.elser_model_2_linux-x86_64')
-INFERENCE_ENDPOINT = os.getenv('INFERENCE_ENDPOINT', '.elser-2-elastic')
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = SCRIPT_DIR.parent / "config" / "elasticsearch.yml"
 
-headers = {
-    "Authorization": f"ApiKey {API_KEY}",
-    "Content-Type": "application/json"
-}
+# Default values
+ES_INDEX = 'contracts'
+ELSER_MODEL = '.elser_model_2_linux-x86_64'
+
+
+def load_yaml(path: Path) -> dict:
+    """Load YAML configuration file."""
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    if yaml is None:
+        raise RuntimeError(
+            "PyYAML is required to load configuration files. Install with 'pip install PyYAML'."
+        )
+
+    with path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Configuration must be a mapping (found {type(data).__name__})")
+    return data
+
+
+def build_auth_header(config: dict) -> str:
+    """Build authorization header from config (prefer api_key over user/password)."""
+    api_key = config.get("api_key", "").strip()
+    if api_key:
+        return f"ApiKey {api_key}"
+    
+    user = config.get("user", "").strip()
+    password = config.get("password", "").strip()
+    if user and password:
+        token = f"{user}:{password}"
+        encoded = base64.b64encode(token.encode("utf-8")).decode("ascii")
+        return f"Basic {encoded}"
+    
+    raise ValueError("Config must include either 'api_key' or both 'user' and 'password'")
+
+
+def load_config(config_path: Path = None) -> tuple:
+    """Load Elasticsearch configuration and return endpoint and headers."""
+    if config_path is None:
+        config_path = DEFAULT_CONFIG_PATH
+    
+    config = load_yaml(config_path)
+    
+    endpoint = config.get("endpoint", "").strip()
+    if not endpoint:
+        raise ValueError("Config must include an 'endpoint'")
+    
+    auth_header = build_auth_header(config)
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": "application/json"
+    }
+    
+    # Add any custom headers from config
+    custom_headers = config.get("headers", {})
+    if isinstance(custom_headers, dict):
+        headers.update({str(k): str(v) for k, v in custom_headers.items()})
+    
+    return endpoint, headers
+
+
+# Global variables (will be set in main)
+ES_ENDPOINT = None
+headers = None
+INFERENCE_ENDPOINT = '.elser-2-elastic'  # Default, will be auto-detected if not found
 
 
 def print_header(title):
@@ -55,22 +116,49 @@ def check_elasticsearch():
 
 
 def check_inference_endpoint():
-    """Check if ELSER inference endpoint is available."""
+    """Check if ELSER inference endpoint is available, auto-detect if needed."""
+    global INFERENCE_ENDPOINT
+    
     print_header("Checking ELSER Inference Endpoint")
     try:
         response = requests.get(f"{ES_ENDPOINT}/_inference/_all", headers=headers)
         if response.status_code == 200:
             endpoints = response.json().get('endpoints', [])
+            
+            # First, try to find the specified endpoint
             for endpoint in endpoints:
                 if endpoint.get('inference_id') == INFERENCE_ENDPOINT:
                     print(f"✅ Found inference endpoint: {INFERENCE_ENDPOINT}")
                     print(f"   Task type: {endpoint.get('task_type', 'unknown')}")
                     return True
+            
+            # If not found, try to auto-detect any ELSER endpoint
+            elser_endpoints = []
+            for endpoint in endpoints:
+                inference_id = endpoint.get('inference_id', '')
+                if 'elser' in inference_id.lower():
+                    elser_endpoints.append(inference_id)
+            
+            if elser_endpoints:
+                # Prefer endpoints starting with .elser-2- or .elser_model_2
+                preferred = [e for e in elser_endpoints if '.elser-2-' in e or '.elser_model_2' in e]
+                if preferred:
+                    INFERENCE_ENDPOINT = preferred[0]
+                else:
+                    INFERENCE_ENDPOINT = elser_endpoints[0]
+                
+                # Find the endpoint object to get task type
+                endpoint_obj = next((e for e in endpoints if e.get('inference_id') == INFERENCE_ENDPOINT), None)
+                task_type = endpoint_obj.get('task_type', 'unknown') if endpoint_obj else 'unknown'
+                
+                print(f"⚠️  Specified endpoint not found, using auto-detected: {INFERENCE_ENDPOINT}")
+                print(f"   Task type: {task_type}")
+                return True
+            
             print(f"❌ Inference endpoint '{INFERENCE_ENDPOINT}' not found")
             print(f"\n   Available endpoints:")
             for endpoint in endpoints:
-                if 'elser' in endpoint.get('inference_id', '').lower():
-                    print(f"   - {endpoint.get('inference_id')}")
+                print(f"   - {endpoint.get('inference_id')}")
             return False
         else:
             print(f"⚠️  Could not check inference endpoints: HTTP {response.status_code}")
@@ -363,6 +451,8 @@ def verify_ingestion():
 
 
 def main():
+    global ES_ENDPOINT, headers, INFERENCE_ENDPOINT
+    
     parser = argparse.ArgumentParser(
         description='Setup Elasticsearch infrastructure and ingest PDF files',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -386,6 +476,11 @@ Examples:
     )
 
     parser.add_argument(
+        '-c', '--config',
+        default=str(DEFAULT_CONFIG_PATH),
+        help=f'Path to Elasticsearch config YAML (default: {DEFAULT_CONFIG_PATH})'
+    )
+    parser.add_argument(
         '--pdf-path',
         default='airline_contracts',
         help='Path to PDF file or directory containing PDFs (default: airline_contracts)'
@@ -405,8 +500,23 @@ Examples:
         action='store_true',
         help='Skip setup, only ingest PDFs (assumes infrastructure exists)'
     )
+    parser.add_argument(
+        '--inference-endpoint',
+        help='Inference endpoint ID (default: .elser-2-elastic, will auto-detect if not found)'
+    )
 
     args = parser.parse_args()
+    
+    # Set inference endpoint if provided
+    if args.inference_endpoint:
+        INFERENCE_ENDPOINT = args.inference_endpoint
+    
+    # Load configuration
+    try:
+        ES_ENDPOINT, headers = load_config(Path(args.config))
+    except Exception as e:
+        print(f"❌ Failed to load config: {e}")
+        sys.exit(1)
 
     print("\n" + "="*60)
     print("Elasticsearch PDF Ingestion Setup")
@@ -476,7 +586,8 @@ Examples:
         print("\n💡 Note: ELSER embeddings are generated asynchronously.")
         print("   Wait ~30-60 seconds before testing semantic search.")
         print("\nTest semantic search:")
-        print(f'  curl -H "Authorization: ApiKey {API_KEY}" \\')
+        auth_header = headers.get("Authorization", "")
+        print(f'  curl -H "Authorization: {auth_header}" \\')
         print(f'    -H "Content-Type: application/json" \\')
         print(f'    {ES_ENDPOINT}/{ES_INDEX}/_search -d \'{{')
         print('    "query": {"semantic": {"field": "semantic_content", "query": "baggage fees"}},')
