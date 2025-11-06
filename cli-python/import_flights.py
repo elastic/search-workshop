@@ -31,6 +31,9 @@ except ImportError:  # pragma: no cover - handled at runtime
 
 LOGGER = logging.getLogger(__name__)
 BATCH_SIZE = 1_000
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = SCRIPT_DIR.parent / "config" / "elasticsearch.yml"
+DEFAULT_MAPPING_PATH = SCRIPT_DIR.parent / "config" / "mappings-flights.json"
 
 
 def load_yaml(path: Path) -> Dict[str, object]:
@@ -525,10 +528,15 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "-c",
         "--config",
-        default="config/elasticsearch.yml",
-        help="Path to Elasticsearch config YAML (default: config/elasticsearch.yml)",
+        default=str(DEFAULT_CONFIG_PATH),
+        help=f"Path to Elasticsearch config YAML (default: {DEFAULT_CONFIG_PATH})",
     )
-    parser.add_argument("-m", "--mapping", default="mappings-flights.json", help="Path to mappings JSON (default: mappings-flights.json)")
+    parser.add_argument(
+        "-m",
+        "--mapping",
+        default=str(DEFAULT_MAPPING_PATH),
+        help=f"Path to mappings JSON (default: {DEFAULT_MAPPING_PATH})",
+    )
     parser.add_argument("-d", "--data-dir", default="data", help="Directory containing data files (default: data)")
     parser.add_argument("-f", "--file", help="Only import the specified file")
     parser.add_argument("-a", "--all", action="store_true", help="Import all files found in the data directory")
