@@ -43,13 +43,20 @@ fi
 DEFAULT_ARGS=(--file "$DATA_FILE")
 
 PASSTHROUGH=("$@")
-for arg in "${PASSTHROUGH[@]}"; do
-  case "$arg" in
-    --status|--delete-index|--help|-h)
-      DEFAULT_ARGS=()
-      break
-      ;;
-  esac
-done
+if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
+  for arg in "${PASSTHROUGH[@]}"; do
+    case "$arg" in
+      --status|--delete-index|--help|-h)
+        DEFAULT_ARGS=()
+        break
+        ;;
+    esac
+  done
+fi
 
-python3 import_flights.py --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" "${PASSTHROUGH[@]}" "${DEFAULT_ARGS[@]}"
+# Use conditional expansion to avoid "unbound variable" error when arrays are empty
+ARGS=()
+[ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
+[ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
+
+python3 import_flights.py --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"

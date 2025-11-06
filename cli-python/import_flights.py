@@ -284,7 +284,8 @@ class FlightLoader:
 
     def ensure_index(self) -> None:
         if self._client.index_exists(self._index):
-            return
+            LOGGER.info("Index '%s' already exists, deleting it", self._index)
+            self._client.delete_index(self._index)
         self._client.create_index(self._index, self._mapping)
 
     def import_files(self, files: Iterable[Path]) -> None:
@@ -303,6 +304,7 @@ class FlightLoader:
         buffered_docs = 0
         indexed_docs = 0
         processed_rows = 0
+        batch_number = 0
 
         for row in self._iter_rows(file_path):
             processed_rows += 1
@@ -315,12 +317,20 @@ class FlightLoader:
             buffered_docs += 1
 
             if buffered_docs >= self._batch_size:
-                indexed_docs += self._flush(buffered_lines)
+                batch_number += 1
+                docs_in_batch = self._flush(buffered_lines)
+                indexed_docs += docs_in_batch
+                sys.stdout.write('.')
+                sys.stdout.flush()
                 buffered_lines.clear()
                 buffered_docs = 0
 
         if buffered_docs:
-            indexed_docs += self._flush(buffered_lines)
+            batch_number += 1
+            docs_in_batch = self._flush(buffered_lines)
+            indexed_docs += docs_in_batch
+            sys.stdout.write('.')
+            sys.stdout.flush()
 
         LOGGER.info(
             "Finished %s (rows processed: %s, documents indexed: %s)",
