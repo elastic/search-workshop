@@ -46,25 +46,25 @@ body {
     color: #000;
 }
 
-/* Card hover effect */
-.card.shadow-sm {
-    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+/* Result item styling */
+.result-item {
+    transition: opacity 0.2s ease-in-out;
 }
 
-.card.shadow-sm:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+.result-item:hover {
+    opacity: 0.8;
 }
 
-/* Result card title link hover */
-.card-title a:hover {
-    text-decoration: underline !important;
+/* Results container padding */
+#resultsContainer {
+    padding-left: 2rem;
+    padding-right: 2rem;
 }
 
 /* Badge styling enhancements */
 .badge {
-    font-size: 0.7rem;
-    padding: 0.35em 0.65em;
+    font-size: 0.65rem;
+    padding: 0.25em 0.5em;
     font-weight: 600;
 }
 
@@ -163,5 +163,11 @@ body,
         width: 100%;
         justify-content: center;
         margin-top: 1rem;
+    }
+    
+    /* Reduce padding on mobile */
+    #resultsContainer {
+        padding-left: 1rem;
+        padding-right: 1rem;
     }
 }

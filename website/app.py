@@ -135,19 +135,19 @@ def search():
     query = data.get('query', '').strip()
     index_name = data.get('index', 'all')  # 'all', 'flights', 'airlines', or 'contracts'
     
-    if not query:
-        return jsonify({'error': 'Query is required'}), 400
-    
     try:
+        # When no query, load 10 documents
+        size = 10 if not query else 20
+        
         if index_name == 'all':
             # Search all indices and combine results
-            results = search_all_indices(query, search_type)
+            results = search_all_indices(query, search_type, size)
         elif index_name == 'flights':
-            results = search_flights(query, search_type)
+            results = search_flights(query, search_type, size)
         elif index_name == 'airlines':
-            results = search_airlines(query, search_type)
+            results = search_airlines(query, search_type, size)
         elif index_name == 'contracts':
-            results = search_contracts(query, search_type)
+            results = search_contracts(query, search_type, size)
         else:
             return jsonify({'error': f'Unknown index: {index_name}'}), 400
         
@@ -215,8 +215,8 @@ def search_all_indices(query: str, search_type: str, size: int = 20) -> Dict:
 
 def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
     """Search flights index."""
-    body = {
-        "query": {
+    if query:
+        query_clause = {
             "multi_match": {
                 "query": query,
                 "fields": [
@@ -229,7 +229,12 @@ def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
                 "type": "best_fields",
                 "fuzziness": "AUTO"
             }
-        },
+        }
+    else:
+        query_clause = {"match_all": {}}
+    
+    body = {
+        "query": query_clause,
         "size": size,
         "_source": {
             "includes": [
@@ -253,8 +258,8 @@ def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
 
 def search_airlines(query: str, search_type: str, size: int = 20) -> Dict:
     """Search airlines index."""
-    body = {
-        "query": {
+    if query:
+        query_clause = {
             "multi_match": {
                 "query": query,
                 "fields": [
@@ -264,7 +269,12 @@ def search_airlines(query: str, search_type: str, size: int = 20) -> Dict:
                 "type": "best_fields",
                 "fuzziness": "AUTO"
             }
-        },
+        }
+    else:
+        query_clause = {"match_all": {}}
+    
+    body = {
+        "query": query_clause,
         "size": size,
         "_source": {
             "includes": ["Reporting_Airline", "Airline_Name"]
@@ -292,8 +302,8 @@ def search_contracts(query: str, search_type: str, size: int = 20) -> Dict:
 
 def bm25_search(query: str, size: int = 20) -> Dict:
     """Perform BM25 (keyword) search on contracts index."""
-    body = {
-        "query": {
+    if query:
+        query_clause = {
             "multi_match": {
                 "query": query,
                 "fields": [
@@ -305,7 +315,12 @@ def bm25_search(query: str, size: int = 20) -> Dict:
                 "type": "best_fields",
                 "fuzziness": "AUTO"
             }
-        },
+        }
+    else:
+        query_clause = {"match_all": {}}
+    
+    body = {
+        "query": query_clause,
         "size": size,
         "_source": {
             "includes": ["filename", "attachment.title", "attachment.content", "upload_date", "attachment.author", "attachment.description"]
@@ -326,8 +341,8 @@ def bm25_search(query: str, size: int = 20) -> Dict:
 
 def semantic_search(query: str, size: int = 20) -> Dict:
     """Perform semantic search using semantic_content field."""
-    body = {
-        "query": {
+    if query:
+        query_clause = {
             "bool": {
                 "should": [
                     {
@@ -347,7 +362,12 @@ def semantic_search(query: str, size: int = 20) -> Dict:
                     }
                 ]
             }
-        },
+        }
+    else:
+        query_clause = {"match_all": {}}
+    
+    body = {
+        "query": query_clause,
         "size": size,
         "_source": {
             "includes": ["filename", "attachment.title", "attachment.content", "upload_date", "attachment.author", "attachment.description"]
@@ -376,9 +396,9 @@ def ai_agent_search(query: str, size: int = 20) -> Dict:
     This uses a hybrid approach combining semantic and BM25 search,
     and can optionally use Elasticsearch inference API for enhanced results.
     """
-    # Hybrid search combining semantic and keyword search with RRF (Reciprocal Rank Fusion)
-    body = {
-        "query": {
+    if query:
+        # Hybrid search combining semantic and keyword search with RRF (Reciprocal Rank Fusion)
+        query_clause = {
             "bool": {
                 "should": [
                     {
@@ -403,7 +423,12 @@ def ai_agent_search(query: str, size: int = 20) -> Dict:
                     }
                 ]
             }
-        },
+        }
+    else:
+        query_clause = {"match_all": {}}
+    
+    body = {
+        "query": query_clause,
         "size": size,
         "_source": {
             "includes": ["filename", "attachment.title", "attachment.content", "upload_date", "attachment.author", "attachment.description"]
@@ -420,13 +445,12 @@ def ai_agent_search(query: str, size: int = 20) -> Dict:
                     "number_of_fragments": 2
                 }
             }
-        },
-        # Use RRF for better result fusion (if available in Elasticsearch 8.11+)
-        # Remove this if your cluster doesn't support it
-        "rank": {
-            "rrf": {}
         }
     }
+    
+    # Only use RRF when there's a query (it's not needed for match_all)
+    if query:
+        body["rank"] = {"rrf": {}}
     
     try:
         results = make_es_request('POST', '/contracts/_search', body)
@@ -437,7 +461,8 @@ def ai_agent_search(query: str, size: int = 20) -> Dict:
         if "rank" in str(e).lower() or "rrf" in str(e).lower():
             LOGGER.warning(f"RRF not supported, trying hybrid search without RRF: {e}")
             # Remove rank clause and retry
-            del body["rank"]
+            if "rank" in body:
+                del body["rank"]
             try:
                 results = make_es_request('POST', '/contracts/_search', body)
                 results['search_type'] = 'ai_agent'

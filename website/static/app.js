@@ -2,12 +2,13 @@
 let currentSearchMode = 'bm25';
 let currentQuery = '';
 let currentIndex = 'all';
+let searchTimeout = null;
 
 // DOM Elements
 const searchInput = document.getElementById('searchInput');
 const searchButton = document.getElementById('searchButton');
 const modeButtons = document.querySelectorAll('.mode-btn');
-const indexSelect = document.getElementById('indexSelect');
+const indexButtons = document.querySelectorAll('.index-btn');
 const loadingIndicator = document.getElementById('loadingIndicator');
 const errorMessage = document.getElementById('errorMessage');
 const resultsContainer = document.getElementById('resultsContainer');
@@ -23,12 +24,46 @@ document.addEventListener('DOMContentLoaded', () => {
     // Restore search state from URL
     restoreSearchFromURL();
     
+    // Update URL with current state (to persist defaults if no URL params)
+    updateURL();
+    
     // Set up event listeners
     searchButton.addEventListener('click', performSearch);
     searchInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
+            // Clear any pending timeout and search immediately
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+                searchTimeout = null;
+            }
             performSearch();
         }
+    });
+    
+    // Search as you type with debouncing
+    searchInput.addEventListener('input', () => {
+        // Clear any existing timeout
+        if (searchTimeout) {
+            clearTimeout(searchTimeout);
+        }
+        
+        const query = searchInput.value.trim();
+        
+        // If input is cleared, show default results (10 documents)
+        if (!query) {
+            currentQuery = '';
+            updateURL();
+            // Load default results
+            searchTimeout = setTimeout(() => {
+                performSearch();
+            }, 300);
+            return;
+        }
+        
+        // Debounce the search - wait 300ms after user stops typing
+        searchTimeout = setTimeout(() => {
+            performSearch();
+        }, 300);
     });
     
     // Logo click to reset search
@@ -37,11 +72,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Theme toggle
     themeToggle.addEventListener('click', toggleTheme);
     
-    // Set initial active button state
-    const activeBtn = document.querySelector('.mode-btn.active');
-    if (activeBtn) {
-        activeBtn.classList.remove('btn-outline-primary');
-        activeBtn.classList.add('btn-primary');
+    // Set initial active button states
+    const activeModeBtn = document.querySelector('.mode-btn.active');
+    if (activeModeBtn) {
+        activeModeBtn.classList.remove('btn-outline-primary');
+        activeModeBtn.classList.add('btn-primary');
+    }
+    
+    const activeIndexBtn = document.querySelector('.index-btn.active');
+    if (activeIndexBtn) {
+        activeIndexBtn.classList.remove('btn-outline-primary');
+        activeIndexBtn.classList.add('btn-primary');
     }
     
     // Mode toggle
@@ -58,32 +99,39 @@ document.addEventListener('DOMContentLoaded', () => {
             currentSearchMode = btn.dataset.mode;
             
             // Update URL and re-search if there's a current query
+            updateURL();
             if (currentQuery) {
-                updateURL();
                 performSearch();
             }
         });
     });
     
-    // Index selector
-    indexSelect.addEventListener('change', () => {
-        currentIndex = indexSelect.value;
-        
-        // Update URL and re-search if there's a current query
-        if (currentQuery) {
+    // Index toggle
+    indexButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            indexButtons.forEach(b => {
+                b.classList.remove('active');
+                b.classList.remove('btn-primary');
+                b.classList.add('btn-outline-primary');
+            });
+            btn.classList.add('active');
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-primary');
+            currentIndex = btn.dataset.index;
+            
+            // Update URL
             updateURL();
+            
+            // Load documents - search if there's a query, otherwise load 10 documents
             performSearch();
-        }
+        });
     });
 });
 
 async function performSearch() {
     const query = searchInput.value.trim();
     
-    if (!query) {
-        return;
-    }
-    
+    // Allow empty queries to load documents when index is selected
     currentQuery = query;
     hideError();
     showLoading();
@@ -122,11 +170,9 @@ async function performSearch() {
 function displayResults(data) {
     if (!data.hits || !data.hits.hits || data.hits.hits.length === 0) {
         resultsContainer.innerHTML = `
-            <div class="card">
-                <div class="card-body text-center py-5">
-                    <i class="bi bi-inbox display-1 text-muted"></i>
-                    <p class="text-muted mt-3">No results found</p>
-                </div>
+            <div class="text-center py-5">
+                <i class="bi bi-inbox display-1 text-muted"></i>
+                <p class="text-muted mt-3">No results found</p>
             </div>
         `;
         return;
@@ -243,36 +289,23 @@ function displayResults(data) {
         // Special formatting for airlines - two field format
         if (indexName === 'airlines') {
             html += `
-                <div class="card mb-3 shadow-sm">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <h5 class="card-title mb-0">
-                                <a href="#" class="text-decoration-none text-primary">${title}</a>
-                            </h5>
-                            ${indexBadge}
-                        </div>
-                        <p class="mb-0">
-                            <strong>Airline Code:</strong> ${url}
-                        </p>
+                <div class="result-item mb-3 pb-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <h6 class="mb-0 fw-bold">${title}</h6>
+                        ${indexBadge}
                     </div>
+                    <p class="mb-0 small text-muted">Airline Code: ${url}</p>
                 </div>
             `;
         } else {
             html += `
-                <div class="card mb-3 shadow-sm">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <h5 class="card-title mb-0">
-                                <a href="#" class="text-decoration-none text-primary">${escapeHtml(title)}</a>
-                            </h5>
-                            ${indexBadge}
-                        </div>
-                        <p class="text-success small mb-2">
-                            <i class="bi bi-link-45deg"></i> ${escapeHtml(url)}
-                        </p>
-                        <p class="card-text">${snippetHtml}</p>
-                        ${meta.length > 0 ? `<small class="text-muted"><i class="bi bi-info-circle"></i> ${meta.join(' | ')}</small>` : ''}
+                <div class="result-item mb-3 pb-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <h6 class="mb-0 fw-bold">${escapeHtml(title)}</h6>
+                        ${indexBadge}
                     </div>
+                    ${snippetHtml ? `<p class="small mb-1">${snippetHtml}</p>` : ''}
+                    ${meta.length > 0 ? `<small class="text-muted">${meta.join(' | ')}</small>` : ''}
                 </div>
             `;
         }
@@ -282,12 +315,10 @@ function displayResults(data) {
     const totalValue = typeof total === 'object' ? total.value : total;
     const indicesInfo = data.searched_indices ? ` (${data.searched_indices.join(', ')})` : '';
     html += `
-        <div class="card mt-4">
-            <div class="card-body text-center">
-                <p class="text-muted mb-0">
-                    <i class="bi bi-bar-chart"></i> About ${totalValue.toLocaleString()} results${indicesInfo}
-                </p>
-            </div>
+        <div class="text-center mt-4 pt-3 border-top">
+            <p class="text-muted mb-0 small">
+                <i class="bi bi-bar-chart"></i> About ${totalValue.toLocaleString()} results${indicesInfo}
+            </p>
         </div>
     `;
     
@@ -327,8 +358,8 @@ function resetSearch() {
     hideLoading();
     hideError();
     
-    // Clear URL parameters
-    window.history.pushState({}, '', window.location.pathname);
+    // Update URL (keeps type and index, removes query)
+    updateURL();
     
     // Focus back on search input
     searchInput.focus();
@@ -339,10 +370,11 @@ function updateURL() {
     if (currentQuery) {
         params.set('q', currentQuery);
     }
-    if (currentSearchMode && currentSearchMode !== 'bm25') {
+    // Always persist search mode and index in URL
+    if (currentSearchMode) {
         params.set('type', currentSearchMode);
     }
-    if (currentIndex && currentIndex !== 'all') {
+    if (currentIndex) {
         params.set('index', currentIndex);
     }
     
@@ -359,35 +391,50 @@ function restoreSearchFromURL() {
     const type = params.get('type');
     const index = params.get('index');
     
+    // Restore search mode (even if no query)
+    if (type && ['bm25', 'semantic', 'ai'].includes(type)) {
+        currentSearchMode = type;
+        // Update button states
+        modeButtons.forEach(btn => {
+            if (btn.dataset.mode === type) {
+                btn.classList.remove('btn-outline-primary');
+                btn.classList.add('btn-primary');
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-outline-primary');
+            }
+        });
+    }
+    
+    // Restore index selection (even if no query)
+    if (index && ['all', 'flights', 'airlines', 'contracts'].includes(index)) {
+        currentIndex = index;
+        // Update button states
+        indexButtons.forEach(btn => {
+            if (btn.dataset.index === index) {
+                btn.classList.remove('btn-outline-primary');
+                btn.classList.add('btn-primary');
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-outline-primary');
+            }
+        });
+    }
+    
     if (query) {
         // Restore search input
         searchInput.value = query;
         currentQuery = query;
         
-        // Restore search mode
-        if (type && ['bm25', 'semantic', 'ai'].includes(type)) {
-            currentSearchMode = type;
-            // Update button states
-            modeButtons.forEach(btn => {
-                if (btn.dataset.mode === type) {
-                    btn.classList.remove('btn-outline-primary');
-                    btn.classList.add('btn-primary');
-                    btn.classList.add('active');
-                } else {
-                    btn.classList.remove('active');
-                    btn.classList.remove('btn-primary');
-                    btn.classList.add('btn-outline-primary');
-                }
-            });
-        }
-        
-        // Restore index selection
-        if (index && ['all', 'flights', 'airlines', 'contracts'].includes(index)) {
-            currentIndex = index;
-            indexSelect.value = index;
-        }
-        
         // Perform the search
+        performSearch();
+    } else {
+        // If there's no query, load default results (10 documents)
+        currentQuery = '';
         performSearch();
     }
 }

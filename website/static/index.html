@@ -59,13 +59,13 @@
                         </div>
                     </div>
                     <div class="flex-shrink-0 ms-auto text-end">
-                        <label for="indexSelect" class="form-label fw-semibold mb-1 small d-block">Index:</label>
-                        <select id="indexSelect" class="form-select">
-                            <option value="all">All Indices</option>
-                            <option value="flights">Flights</option>
-                            <option value="airlines">Airlines</option>
-                            <option value="contracts">Contracts</option>
-                        </select>
+                        <label class="form-label fw-semibold mb-1 small d-block">Index:</label>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-outline-primary index-btn active" data-index="all">All Indices</button>
+                            <button type="button" class="btn btn-outline-primary index-btn" data-index="flights">Flights</button>
+                            <button type="button" class="btn btn-outline-primary index-btn" data-index="airlines">Airlines</button>
+                            <button type="button" class="btn btn-outline-primary index-btn" data-index="contracts">Contracts</button>
+                        </div>
                     </div>
                 </div>
             </div>
