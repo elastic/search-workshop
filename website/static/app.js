@@ -1,17 +1,28 @@
 // State
 let currentSearchMode = 'bm25';
 let currentQuery = '';
+let currentIndex = 'all';
 
 // DOM Elements
 const searchInput = document.getElementById('searchInput');
 const searchButton = document.getElementById('searchButton');
 const modeButtons = document.querySelectorAll('.mode-btn');
+const indexSelect = document.getElementById('indexSelect');
 const loadingIndicator = document.getElementById('loadingIndicator');
 const errorMessage = document.getElementById('errorMessage');
 const resultsContainer = document.getElementById('resultsContainer');
+const themeToggle = document.getElementById('themeToggle');
+const themeIcon = document.getElementById('themeIcon');
+const logo = document.getElementById('logo');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize theme
+    initializeTheme();
+    
+    // Restore search state from URL
+    restoreSearchFromURL();
+    
     // Set up event listeners
     searchButton.addEventListener('click', performSearch);
     searchInput.addEventListener('keypress', (e) => {
@@ -20,18 +31,49 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // Logo click to reset search
+    logo.addEventListener('click', resetSearch);
+    
+    // Theme toggle
+    themeToggle.addEventListener('click', toggleTheme);
+    
+    // Set initial active button state
+    const activeBtn = document.querySelector('.mode-btn.active');
+    if (activeBtn) {
+        activeBtn.classList.remove('btn-outline-primary');
+        activeBtn.classList.add('btn-primary');
+    }
+    
     // Mode toggle
     modeButtons.forEach(btn => {
         btn.addEventListener('click', () => {
-            modeButtons.forEach(b => b.classList.remove('active'));
+            modeButtons.forEach(b => {
+                b.classList.remove('active');
+                b.classList.remove('btn-primary');
+                b.classList.add('btn-outline-primary');
+            });
             btn.classList.add('active');
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-primary');
             currentSearchMode = btn.dataset.mode;
             
-            // Re-search if there's a current query
+            // Update URL and re-search if there's a current query
             if (currentQuery) {
+                updateURL();
                 performSearch();
             }
         });
+    });
+    
+    // Index selector
+    indexSelect.addEventListener('change', () => {
+        currentIndex = indexSelect.value;
+        
+        // Update URL and re-search if there's a current query
+        if (currentQuery) {
+            updateURL();
+            performSearch();
+        }
     });
 });
 
@@ -47,6 +89,9 @@ async function performSearch() {
     showLoading();
     clearResults();
     
+    // Update URL with search parameters
+    updateURL();
+    
     try {
         const response = await fetch('/api/search', {
             method: 'POST',
@@ -55,7 +100,8 @@ async function performSearch() {
             },
             body: JSON.stringify({
                 query: query,
-                type: currentSearchMode
+                type: currentSearchMode,
+                index: currentIndex
             })
         });
         
@@ -75,7 +121,14 @@ async function performSearch() {
 
 function displayResults(data) {
     if (!data.hits || !data.hits.hits || data.hits.hits.length === 0) {
-        resultsContainer.innerHTML = '<div class="no-results">No results found</div>';
+        resultsContainer.innerHTML = `
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-inbox display-1 text-muted"></i>
+                    <p class="text-muted mt-3">No results found</p>
+                </div>
+            </div>
+        `;
         return;
     }
     
@@ -86,55 +139,157 @@ function displayResults(data) {
     hits.forEach(hit => {
         const source = hit._source || {};
         const highlight = hit.highlight || {};
+        const indexName = hit._index || 'unknown';
         
-        // Extract title
-        const title = highlight['attachment.title']?.[0] || 
+        let title, url, snippets, meta;
+        
+        // Format results based on index type
+        if (indexName === 'flights') {
+            // Flights index
+            const flightNum = highlight['Flight_Number']?.[0] || source.Flight_Number || '';
+            const airline = highlight['Reporting_Airline']?.[0] || source.Reporting_Airline || '';
+            const origin = highlight['Origin']?.[0] || source.Origin || '';
+            const dest = highlight['Dest']?.[0] || source.Dest || '';
+            
+            title = `Flight ${flightNum || source.Flight_Number || 'N/A'}`;
+            url = `${source.Origin || 'N/A'} → ${source.Dest || 'N/A'}`;
+            
+            // Build snippet from flight details
+            const parts = [];
+            if (airline) parts.push(`Airline: ${airline}`);
+            if (source.DepDelayMin !== undefined) parts.push(`Departure Delay: ${source.DepDelayMin} min`);
+            if (source.ArrDelayMin !== undefined) parts.push(`Arrival Delay: ${source.ArrDelayMin} min`);
+            if (source.DistanceMiles) parts.push(`Distance: ${source.DistanceMiles} miles`);
+            if (source.Cancelled) parts.push('Status: Cancelled');
+            
+            snippets = parts.length > 0 ? [parts.join(' | ')] : ['Flight information'];
+            
+            // Meta information
+            meta = [];
+            if (source.FlightID) meta.push(`Flight ID: ${source.FlightID}`);
+            if (source.Tail_Number) meta.push(`Tail Number: ${source.Tail_Number}`);
+            if (source['@timestamp']) {
+                const date = new Date(source['@timestamp']).toLocaleDateString();
+                meta.push(`Date: ${date}`);
+            }
+            
+        } else if (indexName === 'airlines') {
+            // Airlines index - two field format
+            let airlineName = highlight['Airline_Name']?.[0] || '';
+            let code = highlight['Reporting_Airline']?.[0] || '';
+            
+            // Process highlights - replace <em> tags with highlight markup if highlights exist
+            if (airlineName) {
+                airlineName = airlineName.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
+            } else {
+                airlineName = source.Airline_Name || 'Unknown Airline';
+            }
+            
+            if (code) {
+                code = code.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
+            } else {
+                code = source.Reporting_Airline || 'N/A';
+            }
+            
+            title = airlineName;
+            url = code;
+            snippets = [];
+            meta = [];
+            
+        } else {
+            // Contracts index (original logic)
+            title = highlight['attachment.title']?.[0] || 
                     source.attachment?.title || 
                     source.filename || 
                     'Untitled';
-        
-        // Extract content snippets - prefer description, then content
-        let snippets = highlight['attachment.description'] || highlight['attachment.content'] || [];
-        if (snippets.length === 0) {
-            // Fallback: use description or content
-            const description = source.attachment?.description;
-            const content = source.attachment?.content;
-            const text = description || content || '';
-            if (text) {
-                snippets = [text.substring(0, 200) + (text.length > 200 ? '...' : '')];
+            
+            url = source.filename || 'Unknown file';
+            
+            snippets = highlight['attachment.description'] || highlight['attachment.content'] || [];
+            if (snippets.length === 0) {
+                const description = source.attachment?.description;
+                const content = source.attachment?.content;
+                const text = description || content || '';
+                if (text) {
+                    snippets = [text.substring(0, 200) + (text.length > 200 ? '...' : '')];
+                }
+            }
+            
+            meta = [];
+            if (source.upload_date) {
+                const date = new Date(source.upload_date).toLocaleDateString();
+                meta.push(`Uploaded: ${date}`);
+            }
+            if (source.attachment?.author) {
+                meta.push(`Author: ${source.attachment.author}`);
             }
         }
         
-        // Build snippet HTML
+        // Build snippet HTML - process <em> tags in snippets
         const snippetHtml = snippets.map(snippet => {
-            // Clean up highlighting markers
-            return snippet
-                .replace(/<em>/g, '<mark class="result-highlight">')
-                .replace(/<\/em>/g, '</mark>');
+            if (typeof snippet === 'string') {
+                return snippet
+                    .replace(/<em>/g, '<mark class="result-highlight">')
+                    .replace(/<\/em>/g, '</mark>');
+            }
+            return snippet;
         }).join(' ... ');
         
-        // Extract metadata
-        const filename = source.filename || 'Unknown file';
-        const uploadDate = source.upload_date ? 
-            new Date(source.upload_date).toLocaleDateString() : '';
-        const author = source.attachment?.author || '';
+        // Add index badge with Bootstrap styling
+        const badgeClass = indexName === 'flights' ? 'bg-primary' : 
+                          indexName === 'airlines' ? 'bg-info' : 'bg-warning';
+        const indexBadge = `<span class="badge ${badgeClass} text-uppercase">${indexName}</span>`;
         
-        html += `
-            <div class="result-item">
-                <div class="result-title">${escapeHtml(title)}</div>
-                <div class="result-url">${escapeHtml(filename)}</div>
-                <div class="result-snippet">${snippetHtml}</div>
-                <div class="result-meta">
-                    ${author ? `Author: ${escapeHtml(author)} | ` : ''}
-                    ${uploadDate ? `Uploaded: ${uploadDate}` : ''}
+        // Special formatting for airlines - two field format
+        if (indexName === 'airlines') {
+            html += `
+                <div class="card mb-3 shadow-sm">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h5 class="card-title mb-0">
+                                <a href="#" class="text-decoration-none text-primary">${title}</a>
+                            </h5>
+                            ${indexBadge}
+                        </div>
+                        <p class="mb-0">
+                            <strong>Airline Code:</strong> ${url}
+                        </p>
+                    </div>
                 </div>
-            </div>
-        `;
+            `;
+        } else {
+            html += `
+                <div class="card mb-3 shadow-sm">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <h5 class="card-title mb-0">
+                                <a href="#" class="text-decoration-none text-primary">${escapeHtml(title)}</a>
+                            </h5>
+                            ${indexBadge}
+                        </div>
+                        <p class="text-success small mb-2">
+                            <i class="bi bi-link-45deg"></i> ${escapeHtml(url)}
+                        </p>
+                        <p class="card-text">${snippetHtml}</p>
+                        ${meta.length > 0 ? `<small class="text-muted"><i class="bi bi-info-circle"></i> ${meta.join(' | ')}</small>` : ''}
+                    </div>
+                </div>
+            `;
+        }
     });
     
     // Add stats
     const totalValue = typeof total === 'object' ? total.value : total;
-    html += `<div class="result-stats">About ${totalValue.toLocaleString()} results</div>`;
+    const indicesInfo = data.searched_indices ? ` (${data.searched_indices.join(', ')})` : '';
+    html += `
+        <div class="card mt-4">
+            <div class="card-body text-center">
+                <p class="text-muted mb-0">
+                    <i class="bi bi-bar-chart"></i> About ${totalValue.toLocaleString()} results${indicesInfo}
+                </p>
+            </div>
+        </div>
+    `;
     
     resultsContainer.innerHTML = html;
 }
@@ -152,7 +307,7 @@ function hideLoading() {
 }
 
 function showError(message) {
-    errorMessage.textContent = `Error: ${message}`;
+    errorMessage.innerHTML = `<i class="bi bi-exclamation-triangle"></i> <strong>Error:</strong> ${escapeHtml(message)}`;
     errorMessage.style.display = 'block';
 }
 
@@ -160,8 +315,115 @@ function hideError() {
     errorMessage.style.display = 'none';
 }
 
+function resetSearch() {
+    // Clear search input
+    searchInput.value = '';
+    currentQuery = '';
+    
+    // Clear results
+    clearResults();
+    
+    // Hide loading and error messages
+    hideLoading();
+    hideError();
+    
+    // Clear URL parameters
+    window.history.pushState({}, '', window.location.pathname);
+    
+    // Focus back on search input
+    searchInput.focus();
+}
+
+function updateURL() {
+    const params = new URLSearchParams();
+    if (currentQuery) {
+        params.set('q', currentQuery);
+    }
+    if (currentSearchMode && currentSearchMode !== 'bm25') {
+        params.set('type', currentSearchMode);
+    }
+    if (currentIndex && currentIndex !== 'all') {
+        params.set('index', currentIndex);
+    }
+    
+    const newURL = params.toString() 
+        ? `${window.location.pathname}?${params.toString()}`
+        : window.location.pathname;
+    
+    window.history.pushState({}, '', newURL);
+}
+
+function restoreSearchFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const query = params.get('q');
+    const type = params.get('type');
+    const index = params.get('index');
+    
+    if (query) {
+        // Restore search input
+        searchInput.value = query;
+        currentQuery = query;
+        
+        // Restore search mode
+        if (type && ['bm25', 'semantic', 'ai'].includes(type)) {
+            currentSearchMode = type;
+            // Update button states
+            modeButtons.forEach(btn => {
+                if (btn.dataset.mode === type) {
+                    btn.classList.remove('btn-outline-primary');
+                    btn.classList.add('btn-primary');
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                    btn.classList.remove('btn-primary');
+                    btn.classList.add('btn-outline-primary');
+                }
+            });
+        }
+        
+        // Restore index selection
+        if (index && ['all', 'flights', 'airlines', 'contracts'].includes(index)) {
+            currentIndex = index;
+            indexSelect.value = index;
+        }
+        
+        // Perform the search
+        performSearch();
+    }
+}
+
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Theme management
+function initializeTheme() {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    setTheme(savedTheme);
+}
+
+function toggleTheme() {
+    const currentTheme = document.documentElement.getAttribute('data-bs-theme') || 'light';
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+}
+
+function setTheme(theme) {
+    document.documentElement.setAttribute('data-bs-theme', theme);
+    
+    // Update icon
+    if (themeIcon) {
+        if (theme === 'dark') {
+            themeIcon.classList.remove('bi-moon-fill');
+            themeIcon.classList.add('bi-sun-fill');
+            themeToggle.setAttribute('title', 'Toggle light mode');
+        } else {
+            themeIcon.classList.remove('bi-sun-fill');
+            themeIcon.classList.add('bi-moon-fill');
+            themeToggle.setAttribute('title', 'Toggle dark mode');
+        }
+    }
 }

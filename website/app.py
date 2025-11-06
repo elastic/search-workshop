@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Flask web app for searching flights index with BM25, Semantic, and AI Agent search."""
+"""AIR Search - Flask web app for searching flights, airlines, and contracts indices with BM25, Semantic, and AI Agent search."""
 
 import json
 import logging
@@ -133,19 +133,23 @@ def search():
     data = request.get_json() or {}
     search_type = data.get('type', 'bm25')
     query = data.get('query', '').strip()
+    index_name = data.get('index', 'all')  # 'all', 'flights', 'airlines', or 'contracts'
     
     if not query:
         return jsonify({'error': 'Query is required'}), 400
     
     try:
-        if search_type == 'bm25':
-            results = bm25_search(query)
-        elif search_type == 'semantic':
-            results = semantic_search(query)
-        elif search_type == 'ai':
-            results = ai_agent_search(query)
+        if index_name == 'all':
+            # Search all indices and combine results
+            results = search_all_indices(query, search_type)
+        elif index_name == 'flights':
+            results = search_flights(query, search_type)
+        elif index_name == 'airlines':
+            results = search_airlines(query, search_type)
+        elif index_name == 'contracts':
+            results = search_contracts(query, search_type)
         else:
-            return jsonify({'error': f'Unknown search type: {search_type}'}), 400
+            return jsonify({'error': f'Unknown index: {index_name}'}), 400
         
         return jsonify(results)
     except urllib_error.HTTPError as e:
@@ -160,6 +164,130 @@ def search():
     except Exception as e:
         LOGGER.error(f"Search error: {e}", exc_info=True)
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
+
+
+def search_all_indices(query: str, search_type: str, size: int = 20) -> Dict:
+    """Search across all indices (flights, airlines, contracts) and combine results."""
+    indices = ['flights', 'airlines', 'contracts']
+    all_hits = []
+    total_hits = 0
+    
+    # Calculate size per index (ensure at least 1)
+    size_per_index = max(1, size // len(indices))
+    
+    for index in indices:
+        try:
+            if index == 'flights':
+                result = search_flights(query, search_type, size_per_index)
+            elif index == 'airlines':
+                result = search_airlines(query, search_type, size_per_index)
+            else:  # contracts
+                result = search_contracts(query, search_type, size_per_index)
+            
+            if result.get('hits', {}).get('hits'):
+                for hit in result['hits']['hits']:
+                    hit['_index'] = index  # Tag each hit with its index
+                    all_hits.append(hit)
+                
+                # Extract total count
+                result_total = result.get('hits', {}).get('total', 0)
+                if isinstance(result_total, dict):
+                    total_hits += result_total.get('value', 0)
+                else:
+                    total_hits += result_total
+        except Exception as e:
+            LOGGER.warning(f"Error searching {index} index: {e}")
+            continue
+    
+    # Sort by score (if available) and limit to size
+    all_hits.sort(key=lambda x: x.get('_score', 0), reverse=True)
+    all_hits = all_hits[:size]
+    
+    return {
+        'hits': {
+            'total': {'value': total_hits, 'relation': 'eq'},
+            'hits': all_hits
+        },
+        'search_type': search_type,
+        'searched_indices': indices
+    }
+
+
+def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
+    """Search flights index."""
+    body = {
+        "query": {
+            "multi_match": {
+                "query": query,
+                "fields": [
+                    "Flight_Number^2",
+                    "Reporting_Airline^1.5",
+                    "Origin^1.5",
+                    "Dest^1.5",
+                    "Tail_Number"
+                ],
+                "type": "best_fields",
+                "fuzziness": "AUTO"
+            }
+        },
+        "size": size,
+        "_source": {
+            "includes": [
+                "FlightID", "Reporting_Airline", "Flight_Number", "Origin", "Dest",
+                "CRSDepTimeLocal", "CRSArrTimeLocal", "DepDelayMin", "ArrDelayMin",
+                "Cancelled", "DistanceMiles", "@timestamp"
+            ]
+        },
+        "highlight": {
+            "fields": {
+                "Flight_Number": {},
+                "Reporting_Airline": {},
+                "Origin": {},
+                "Dest": {}
+            }
+        }
+    }
+    
+    return make_es_request('POST', '/flights/_search', body)
+
+
+def search_airlines(query: str, search_type: str, size: int = 20) -> Dict:
+    """Search airlines index."""
+    body = {
+        "query": {
+            "multi_match": {
+                "query": query,
+                "fields": [
+                    "Airline_Name^2",
+                    "Reporting_Airline^1.5"
+                ],
+                "type": "best_fields",
+                "fuzziness": "AUTO"
+            }
+        },
+        "size": size,
+        "_source": {
+            "includes": ["Reporting_Airline", "Airline_Name"]
+        },
+        "highlight": {
+            "fields": {
+                "Airline_Name": {},
+                "Reporting_Airline": {}
+            }
+        }
+    }
+    
+    return make_es_request('POST', '/airlines/_search', body)
+
+
+def search_contracts(query: str, search_type: str, size: int = 20) -> Dict:
+    """Search contracts index."""
+    if search_type == 'semantic':
+        return semantic_search(query, size)
+    elif search_type == 'ai':
+        return ai_agent_search(query, size)
+    else:  # bm25
+        return bm25_search(query, size)
 
 
 def bm25_search(query: str, size: int = 20) -> Dict:
