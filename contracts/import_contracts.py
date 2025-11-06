@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+"""
+Combined script to setup pipeline, create index, and ingest PDFs.
+Runs all steps in sequence for easy deployment.
+"""
+
+import os
+import sys
+import argparse
+import requests
+import base64
+import json
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+ES_ENDPOINT = os.getenv('ES_ENDPOINT')
+API_KEY = os.getenv('ES_API_KEY')
+ES_INDEX = os.getenv('ES_INDEX', 'contracts')
+ELSER_MODEL = os.getenv('ELSER_MODEL', '.elser_model_2_linux-x86_64')
+INFERENCE_ENDPOINT = os.getenv('INFERENCE_ENDPOINT', '.elser-2-elastic')
+
+headers = {
+    "Authorization": f"ApiKey {API_KEY}",
+    "Content-Type": "application/json"
+}
+
+
+def print_header(title):
+    """Print a formatted section header."""
+    print(f"\n{'='*60}")
+    print(f"{title}")
+    print(f"{'='*60}")
+
+
+def check_elasticsearch():
+    """Check if Elasticsearch is reachable."""
+    print_header("Checking Elasticsearch Connection")
+    try:
+        response = requests.get(ES_ENDPOINT, headers=headers, timeout=5)
+        if response.status_code == 200:
+            info = response.json()
+            print(f"✅ Connected to Elasticsearch")
+            print(f"   Cluster: {info.get('cluster_name', 'unknown')}")
+            print(f"   Version: {info.get('version', {}).get('number', 'unknown')}")
+            return True
+        else:
+            print(f"❌ Failed to connect: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Connection error: {str(e)}")
+        return False
+
+
+def check_inference_endpoint():
+    """Check if ELSER inference endpoint is available."""
+    print_header("Checking ELSER Inference Endpoint")
+    try:
+        response = requests.get(f"{ES_ENDPOINT}/_inference/_all", headers=headers)
+        if response.status_code == 200:
+            endpoints = response.json().get('endpoints', [])
+            for endpoint in endpoints:
+                if endpoint.get('inference_id') == INFERENCE_ENDPOINT:
+                    print(f"✅ Found inference endpoint: {INFERENCE_ENDPOINT}")
+                    print(f"   Task type: {endpoint.get('task_type', 'unknown')}")
+                    return True
+            print(f"❌ Inference endpoint '{INFERENCE_ENDPOINT}' not found")
+            print(f"\n   Available endpoints:")
+            for endpoint in endpoints:
+                if 'elser' in endpoint.get('inference_id', '').lower():
+                    print(f"   - {endpoint.get('inference_id')}")
+            return False
+        else:
+            print(f"⚠️  Could not check inference endpoints: HTTP {response.status_code}")
+            return True  # Continue anyway
+    except Exception as e:
+        print(f"⚠️  Error checking inference endpoint: {str(e)}")
+        return True  # Continue anyway
+
+
+def create_pipeline():
+    """Create the PDF processing pipeline."""
+    print_header("Creating PDF Processing Pipeline")
+
+    pipeline_config = {
+        'description': 'Extract text from PDF - semantic_text field handles chunking and embeddings',
+        'processors': [
+            {
+                'attachment': {
+                    'field': 'data',
+                    'target_field': 'attachment',
+                    'remove_binary': True
+                }
+            },
+            {
+                'set': {
+                    'field': 'semantic_content',
+                    'copy_from': 'attachment.content',
+                    'ignore_empty_value': True
+                }
+            },
+            {
+                'remove': {
+                    'field': 'data',
+                    'ignore_missing': True
+                }
+            },
+            {
+                'set': {
+                    'field': 'upload_date',
+                    'value': '{{ _ingest.timestamp }}'
+                }
+            }
+        ]
+    }
+
+    try:
+        response = requests.put(
+            f"{ES_ENDPOINT}/_ingest/pipeline/pdf_pipeline",
+            headers=headers,
+            json=pipeline_config
+        )
+
+        if response.status_code == 200:
+            print(f"✅ Pipeline created/updated successfully")
+            return True
+        else:
+            print(f"❌ Failed to create pipeline: HTTP {response.status_code}")
+            print(json.dumps(response.json(), indent=2))
+            return False
+    except Exception as e:
+        print(f"❌ Error creating pipeline: {str(e)}")
+        return False
+
+
+def check_index_exists():
+    """Check if the index already exists."""
+    try:
+        response = requests.head(f"{ES_ENDPOINT}/{ES_INDEX}", headers=headers)
+        return response.status_code == 200
+    except:
+        return False
+
+
+def delete_index():
+    """Delete the index if it exists."""
+    print(f"🗑️  Deleting existing index: {ES_INDEX}")
+    try:
+        response = requests.delete(f"{ES_ENDPOINT}/{ES_INDEX}", headers=headers)
+        if response.status_code == 200:
+            print(f"✅ Index deleted successfully")
+            return True
+        else:
+            print(f"❌ Failed to delete index: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Error deleting index: {str(e)}")
+        return False
+
+
+def create_index():
+    """Create index with proper mappings."""
+    print_header("Creating Contracts Index")
+
+    # Check if index exists
+    if check_index_exists():
+        print(f"⚠️  Index '{ES_INDEX}' already exists")
+        return False
+
+    mapping = {
+        'mappings': {
+            'properties': {
+                'filename': {'type': 'keyword'},
+                'airline': {'type': 'keyword'},
+                'upload_date': {'type': 'date'},
+                'attachment': {
+                    'properties': {
+                        'content': {
+                            'type': 'text',
+                            'fields': {
+                                'keyword': {
+                                    'type': 'keyword',
+                                    'ignore_above': 256
+                                }
+                            }
+                        },
+                        'title': {'type': 'text'},
+                        'author': {'type': 'keyword'},
+                        'date': {'type': 'date'},
+                        'content_type': {'type': 'keyword'},
+                        'content_length': {'type': 'long'},
+                        'language': {'type': 'keyword'},
+                        'keywords': {'type': 'text'},
+                        'creator_tool': {'type': 'keyword'}
+                    }
+                },
+                'semantic_content': {
+                    'type': 'semantic_text',
+                    'inference_id': INFERENCE_ENDPOINT
+                }
+            }
+        }
+    }
+
+    try:
+        response = requests.put(
+            f"{ES_ENDPOINT}/{ES_INDEX}",
+            headers=headers,
+            json=mapping
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            print(f"✅ Index created successfully")
+            print(f"   - Acknowledged: {result.get('acknowledged', False)}")
+            print(f"   - Shards acknowledged: {result.get('shards_acknowledged', False)}")
+            print(f"   - Inference endpoint: {INFERENCE_ENDPOINT}")
+            return True
+        else:
+            print(f"❌ Failed to create index: HTTP {response.status_code}")
+            print(json.dumps(response.json(), indent=2))
+            return False
+    except Exception as e:
+        print(f"❌ Error creating index: {str(e)}")
+        return False
+
+
+def get_pdf_files(path):
+    """Get list of PDF files from a path."""
+    path_obj = Path(path)
+
+    if not path_obj.exists():
+        print(f"❌ Path '{path}' does not exist")
+        return []
+
+    if path_obj.is_file():
+        if path_obj.suffix.lower() == '.pdf':
+            return [path_obj]
+        else:
+            print(f"❌ '{path}' is not a PDF file")
+            return []
+
+    elif path_obj.is_dir():
+        pdf_files = list(path_obj.glob('*.pdf'))
+        if not pdf_files:
+            print(f"⚠️  No PDF files found in directory '{path}'")
+        return pdf_files
+
+    return []
+
+
+def extract_airline_name(filename):
+    """Extract airline name from filename."""
+    filename_lower = filename.lower()
+
+    # Handle both old and new naming conventions
+    if 'american' in filename_lower:
+        return 'American Airlines'
+    elif 'southwest' in filename_lower:
+        return 'Southwest'
+    elif 'united' in filename_lower:
+        return 'United'
+    elif 'delta' in filename_lower or 'dl-' in filename_lower:
+        return 'Delta'
+    else:
+        return 'Unknown'
+
+
+def index_pdf(pdf_path):
+    """Index a single PDF file."""
+    pdf_path = Path(pdf_path)
+    filename = pdf_path.name
+    airline = extract_airline_name(filename)
+
+    print(f"\nProcessing: {filename}")
+    print(f"Airline: {airline}")
+
+    try:
+        # Read and encode the PDF
+        with open(pdf_path, 'rb') as pdf_file:
+            encoded_pdf = base64.b64encode(pdf_file.read()).decode('utf-8')
+
+        file_size_mb = len(encoded_pdf) / 1024 / 1024 * 0.75
+        print(f"File size: {file_size_mb:.2f} MB")
+
+        # Index the document
+        index_payload = {
+            "data": encoded_pdf,
+            "filename": filename,
+            "airline": airline
+        }
+
+        response = requests.post(
+            f"{ES_ENDPOINT}/{ES_INDEX}/_doc?pipeline=pdf_pipeline",
+            headers=headers,
+            json=index_payload
+        )
+
+        if response.status_code in [200, 201]:
+            result = response.json()
+            print(f"✅ Successfully indexed: {filename}")
+            print(f"   Document ID: {result.get('_id', 'N/A')}")
+            return True
+        else:
+            print(f"❌ Indexing failed: HTTP {response.status_code}")
+            print(json.dumps(response.json(), indent=2))
+            return False
+
+    except Exception as e:
+        print(f"❌ Error processing {filename}: {str(e)}")
+        return False
+
+
+def ingest_pdfs(pdf_path):
+    """Ingest all PDFs from the specified path."""
+    print_header("Ingesting PDF Files")
+
+    pdf_files = get_pdf_files(pdf_path)
+
+    if not pdf_files:
+        print("❌ No PDF files to process")
+        return False
+
+    print(f"Found {len(pdf_files)} PDF file(s) to process\n")
+
+    success_count = 0
+    failed_count = 0
+
+    for pdf_file in pdf_files:
+        if index_pdf(pdf_file):
+            success_count += 1
+        else:
+            failed_count += 1
+
+    # Summary
+    print_header("SUMMARY")
+    print(f"Total files: {len(pdf_files)}")
+    print(f"✅ Successfully indexed: {success_count}")
+    if failed_count > 0:
+        print(f"❌ Failed: {failed_count}")
+
+    return failed_count == 0
+
+
+def verify_ingestion():
+    """Verify documents were ingested successfully."""
+    print_header("Verifying Ingestion")
+
+    try:
+        response = requests.get(f"{ES_ENDPOINT}/{ES_INDEX}/_count", headers=headers)
+        if response.status_code == 200:
+            count = response.json().get('count', 0)
+            print(f"✅ Index '{ES_INDEX}' contains {count} document(s)")
+            return True
+        else:
+            print(f"⚠️  Could not verify document count")
+            return True
+    except Exception as e:
+        print(f"⚠️  Error verifying: {str(e)}")
+        return True
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Setup Elasticsearch infrastructure and ingest PDF files',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Setup and ingest PDFs from default location
+  python3 setup_and_ingest.py
+
+  # Setup and ingest PDFs from specific directory
+  python3 setup_and_ingest.py --pdf-path /path/to/pdfs
+
+  # Recreate index if it already exists
+  python3 setup_and_ingest.py --recreate
+
+  # Only setup infrastructure (skip PDF ingestion)
+  python3 setup_and_ingest.py --setup-only
+
+  # Skip setup and only ingest PDFs
+  python3 setup_and_ingest.py --ingest-only
+        """
+    )
+
+    parser.add_argument(
+        '--pdf-path',
+        default='airline_contracts',
+        help='Path to PDF file or directory containing PDFs (default: airline_contracts)'
+    )
+    parser.add_argument(
+        '--recreate',
+        action='store_true',
+        help='Delete and recreate the index if it exists'
+    )
+    parser.add_argument(
+        '--setup-only',
+        action='store_true',
+        help='Only setup infrastructure (pipeline and index), skip PDF ingestion'
+    )
+    parser.add_argument(
+        '--ingest-only',
+        action='store_true',
+        help='Skip setup, only ingest PDFs (assumes infrastructure exists)'
+    )
+
+    args = parser.parse_args()
+
+    print("\n" + "="*60)
+    print("Elasticsearch PDF Ingestion Setup")
+    print("="*60)
+    print(f"Endpoint: {ES_ENDPOINT}")
+    print(f"Index: {ES_INDEX}")
+    print(f"Inference: {INFERENCE_ENDPOINT}")
+    print("="*60)
+
+    # Check Elasticsearch connection
+    if not check_elasticsearch():
+        print("\n❌ Cannot connect to Elasticsearch. Exiting.")
+        sys.exit(1)
+
+    # Setup phase
+    if not args.ingest_only:
+        # Check ELSER endpoint
+        if not check_inference_endpoint():
+            print("\n⚠️  ELSER inference endpoint not found!")
+            print("   Please deploy ELSER via Kibana or API before continuing.")
+            print("   See: Management → Machine Learning → Trained Models → ELSER → Deploy")
+            sys.exit(1)
+
+        # Create pipeline
+        if not create_pipeline():
+            print("\n❌ Failed to create pipeline. Exiting.")
+            sys.exit(1)
+
+        # Handle index creation/recreation
+        if check_index_exists():
+            if args.recreate:
+                if not delete_index():
+                    print("\n❌ Failed to delete existing index. Exiting.")
+                    sys.exit(1)
+                if not create_index():
+                    print("\n❌ Failed to create index. Exiting.")
+                    sys.exit(1)
+            else:
+                print(f"\n⚠️  Index '{ES_INDEX}' already exists. Use --recreate to delete and recreate.")
+                if not args.setup_only:
+                    print("   Continuing with PDF ingestion...")
+        else:
+            if not create_index():
+                print("\n❌ Failed to create index. Exiting.")
+                sys.exit(1)
+
+    # Ingestion phase
+    if not args.setup_only:
+        import time
+        start_time = time.time()
+
+        if not ingest_pdfs(args.pdf_path):
+            print("\n❌ PDF ingestion had errors.")
+            sys.exit(1)
+
+        elapsed_time = time.time() - start_time
+        print(f"\n⏱️  Total ingestion time: {elapsed_time:.2f} seconds")
+
+        # Verify ingestion
+        verify_ingestion()
+
+    print("\n" + "="*60)
+    print("✅ Setup Complete!")
+    print("="*60)
+
+    if not args.setup_only:
+        print("\n💡 Note: ELSER embeddings are generated asynchronously.")
+        print("   Wait ~30-60 seconds before testing semantic search.")
+        print("\nTest semantic search:")
+        print(f'  curl -H "Authorization: ApiKey {API_KEY}" \\')
+        print(f'    -H "Content-Type: application/json" \\')
+        print(f'    {ES_ENDPOINT}/{ES_INDEX}/_search -d \'{{')
+        print('    "query": {"semantic": {"field": "semantic_content", "query": "baggage fees"}},')
+        print('    "_source": ["filename", "airline"]')
+        print("  }' | python3 -m json.tool")
+
+    print()
+
+
+if __name__ == "__main__":
+    main()

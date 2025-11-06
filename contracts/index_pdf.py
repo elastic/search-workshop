@@ -50,6 +50,7 @@ def extract_airline_name(filename):
     """Extract airline name from filename."""
     filename_lower = filename.lower()
 
+    # Handle both old and new naming conventions
     if 'american' in filename_lower:
         return 'American Airlines'
     elif 'southwest' in filename_lower:
