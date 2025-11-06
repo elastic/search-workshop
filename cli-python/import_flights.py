@@ -9,6 +9,7 @@ import argparse
 import base64
 import csv
 import glob
+import gzip
 import io
 import json
 import logging
@@ -341,6 +342,11 @@ class FlightLoader:
                         reader = csv.DictReader(text_stream)
                         for row in reader:
                             yield row
+        elif file_path.suffix.lower() == ".gz":
+            with gzip.open(file_path, "rt", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    yield row
         else:
             with file_path.open("r", encoding="utf-8") as handle:
                 reader = csv.DictReader(handle)
