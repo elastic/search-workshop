@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Get the project root (parent of util/)
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Get the project root (script is at root level, so PROJECT_ROOT = SCRIPT_DIR)
+PROJECT_ROOT="$SCRIPT_DIR"
 WEBSITE_DIR="$PROJECT_ROOT/website"
 
 # Change to website directory
