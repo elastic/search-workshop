@@ -72,18 +72,90 @@ body {
 
 /* Result item styling */
 .result-item {
-    transition: opacity 0.2s ease-in-out;
+    transition: all 0.2s ease-in-out;
+    border-radius: 0.5rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
 }
 
 .result-item:hover {
-    opacity: 0.8;
+    transform: translateX(3px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Color-coded result items by index type */
+.result-item-flights {
+    border-left: 5px solid var(--color-primary);
+    background: var(--color-primary-soft);
+}
+
+.result-item-airlines {
+    border-left: 5px solid #10b981;
+    background: rgba(16, 185, 129, 0.08);
+}
+
+.result-item-contracts {
+    border-left: 5px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
+}
+
+[data-bs-theme="dark"] .result-item-flights {
+    background: rgba(96, 165, 250, 0.12);
+}
+
+[data-bs-theme="dark"] .result-item-airlines {
+    background: rgba(16, 185, 129, 0.12);
+}
+
+[data-bs-theme="dark"] .result-item-contracts {
+    background: rgba(245, 158, 11, 0.12);
+}
+
+/* Result item icons */
+.result-item h6 i {
+    font-size: 1.1rem;
+    opacity: 0.9;
+}
+
+.result-item-flights h6 i {
+    color: var(--color-primary) !important;
+}
+
+.result-item-airlines h6 i {
+    color: #10b981 !important;
+}
+
+.result-item-contracts h6 i {
+    color: #f59e0b !important;
+}
+
+/* Result item content icons */
+.result-item p i,
+.result-item small i {
+    opacity: 0.7;
+    font-size: 0.9em;
+}
+
+/* Result item title */
+.result-item h6 {
+    font-size: 1.05rem;
+    line-height: 1.4;
+    margin-bottom: 0.75rem;
+}
+
+/* Result item spacing */
+.result-item p {
+    margin-bottom: 0.5rem;
+}
+
+.result-item p:last-child,
+.result-item small:last-child {
+    margin-bottom: 0;
 }
 
 /* Results container padding */
 #resultsContainer {
-    padding-top: 2rem;
-    padding-left: 2rem;
-    padding-right: 2rem;
+    padding-top: 1rem;
 }
 
 /* Badge styling enhancements */
@@ -101,28 +173,63 @@ body {
 .badge-flights {
     background: var(--color-primary);
     color: #fff;
+    border: none;
 }
 
 .badge-airlines {
-    background: var(--color-primary-soft);
-    color: var(--color-primary);
-    border-color: var(--color-primary-soft-border);
+    background: #10b981;
+    color: #fff;
+    border: none;
 }
 
 .badge-contracts {
-    background: var(--color-primary-soft-strong);
-    color: var(--color-primary);
-    border-color: var(--color-primary-soft-border);
+    background: #f59e0b;
+    color: #fff;
+    border: none;
 }
 
-.badge-airlines,
-.badge-contracts {
-    backdrop-filter: blur(2px);
+[data-bs-theme="dark"] .badge-flights {
+    background: #60a5fa;
+    color: #0f172a;
+}
+
+[data-bs-theme="dark"] .badge-airlines {
+    background: #10b981;
+    color: #0f172a;
+}
+
+[data-bs-theme="dark"] .badge-contracts {
+    background: #f59e0b;
+    color: #0f172a;
 }
 
 /* Button group active state */
 .btn-group .btn.active {
     z-index: 1;
+}
+
+/* Search Mode Selector (facet style) */
+.search-mode-selector {
+    min-width: 160px;
+}
+
+.search-mode-facet-btn {
+    transition: all 0.2s ease;
+    font-size: 0.95rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    width: 100%;
+    text-align: left;
+    border: none;
+}
+
+.search-mode-facet-btn:hover {
+    transform: translateX(2px);
+}
+
+.search-mode-facet-btn:focus {
+    box-shadow: none;
+    outline: none;
 }
 
 .btn-primary {
@@ -262,13 +369,6 @@ body,
         justify-content: center;
         margin-top: 1rem;
     }
-    
-    /* Reduce padding on mobile */
-    #resultsContainer {
-        padding-top: 1.5rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-    }
 }
 
 .text-muted {
@@ -279,24 +379,173 @@ body,
     color: var(--color-primary) !important;
 }
 
-/* Facets styling */
-#facetsContainer .card {
-    border: 1px solid var(--color-border);
-    transition: box-shadow 0.2s ease;
+/* Sidebar Layout */
+.results-layout {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
 }
 
-#facetsContainer .card:hover {
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+.filter-sidebar {
+    flex: 0 0 280px;
+    background: var(--bs-body-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    min-height: 200px;
+    overflow-y: auto;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    will-change: contents;
+    contain: layout;
+}
+
+.sidebar-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--color-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    background: var(--bs-body-bg);
+    z-index: 1;
+}
+
+.sidebar-content {
+    padding: 1rem;
+}
+
+.results-content {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Facets styling */
+#facetsContainer .filter-section {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+#facetsContainer .filter-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+#facetsContainer .filter-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: var(--color-text);
 }
 
 #facetsContainer .facet-btn {
     transition: all 0.2s ease;
+    font-size: 0.95rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 0.5rem;
+    border: none;
 }
 
 #facetsContainer .facet-btn:hover {
-    transform: translateY(-1px);
+    transform: translateX(2px);
 }
 
-#facetsContainer .badge {
-    font-size: 0.7rem;
+#facetsContainer .facet-btn:focus {
+    box-shadow: none;
+    outline: none;
+}
+
+#facetsContainer .scrollable-filters {
+    max-height: 250px;
+    overflow-y: auto;
+    margin-right: -0.5rem;
+    padding-right: 0.5rem;
+}
+
+#facetsContainer .scrollable-filters::-webkit-scrollbar {
+    width: 6px;
+}
+
+#facetsContainer .scrollable-filters::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#facetsContainer .scrollable-filters::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
+}
+
+#facetsContainer .scrollable-filters::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted);
+}
+
+.active-filters-section {
+    padding: 0.75rem;
+    background: var(--color-primary-soft);
+    border-radius: 0.375rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.813rem;
+}
+
+.active-filters-section strong {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--color-text);
+}
+
+/* Mobile responsiveness for sidebar */
+@media (max-width: 991px) {
+    .results-layout {
+        flex-direction: column;
+    }
+
+    .filter-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 85%;
+        max-width: 320px;
+        height: 100vh;
+        max-height: 100vh;
+        z-index: 1050;
+        transform: translateX(-100%);
+        border-radius: 0;
+        border: none;
+        border-right: 1px solid var(--color-border);
+        box-shadow: none;
+    }
+
+    .filter-sidebar.show {
+        transform: translateX(0);
+        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+    }
+
+    .results-content {
+        width: 100%;
+    }
+}
+
+/* Sidebar overlay for mobile */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1049;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sidebar-overlay.show {
+    display: block;
+    opacity: 1;
 }

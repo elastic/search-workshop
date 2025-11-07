@@ -43,23 +43,21 @@
             </div>
             
             <!-- Search Controls -->
-            <div class="d-flex justify-content-between align-items-end gap-4">
-                <div class="flex-shrink-0">
-                    <label class="form-label fw-semibold mb-1 small d-block">Search Mode:</label>
-                    <div class="btn-group" role="group">
-                        <button type="button" class="btn btn-outline-primary mode-btn active" data-mode="bm25">BM25</button>
+            <div class="d-flex justify-content-start align-items-end gap-4">
+                <div class="search-mode-selector">
+                    <label class="form-label fw-semibold mb-2 small d-block">Search Mode:</label>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-primary mode-btn active" data-mode="bm25">BM25</button>
                         <button type="button" class="btn btn-outline-primary mode-btn" data-mode="semantic">Semantic</button>
                         <button type="button" class="btn btn-outline-primary mode-btn" data-mode="ai">AI Agent</button>
                     </div>
                 </div>
-                <div class="flex-shrink-0 ms-auto text-end">
-                    <label class="form-label fw-semibold mb-1 small d-block">Index:</label>
-                    <div class="btn-group" role="group">
-                        <button type="button" class="btn btn-outline-primary index-btn active" data-index="all">All Indices</button>
-                        <button type="button" class="btn btn-outline-primary index-btn" data-index="flights">Flights</button>
-                        <button type="button" class="btn btn-outline-primary index-btn" data-index="airlines">Airlines</button>
-                        <button type="button" class="btn btn-outline-primary index-btn" data-index="contracts">Contracts</button>
-                    </div>
+                <!-- Index Selection - Hidden, using sidebar instead -->
+                <div class="d-none">
+                    <button type="button" class="btn btn-outline-primary index-btn active" data-index="all">All Indices</button>
+                    <button type="button" class="btn btn-outline-primary index-btn" data-index="flights">Flights</button>
+                    <button type="button" class="btn btn-outline-primary index-btn" data-index="airlines">Airlines</button>
+                    <button type="button" class="btn btn-outline-primary index-btn" data-index="contracts">Contracts</button>
                 </div>
             </div>
         </div>
@@ -71,15 +69,31 @@
             </div>
             <p class="mt-3 text-muted">Searching...</p>
         </div>
-        
+
         <!-- Error Message -->
         <div id="errorMessage" class="alert alert-danger" role="alert" style="display: none;"></div>
-        
-        <!-- Facets Container (shown only for flights) -->
-        <div id="facetsContainer" class="mb-4" style="display: none;"></div>
-        
-        <!-- Results Container -->
-        <div id="resultsContainer"></div>
+
+        <!-- Sidebar and Results Layout -->
+        <div class="results-layout">
+            <!-- Filter Sidebar -->
+            <aside id="filterSidebar" class="filter-sidebar" style="display: none;">
+                <div class="sidebar-header">
+                    <h6 class="mb-0"><i class="bi bi-funnel-fill me-2"></i>Filter Results</h6>
+                    <button id="sidebarToggle" class="btn btn-sm btn-link text-muted d-lg-none" type="button">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+                <div id="facetsContainer" class="sidebar-content"></div>
+            </aside>
+
+            <!-- Toggle button for mobile -->
+            <button id="filterToggleMobile" class="btn btn-outline-primary btn-sm mb-3 d-lg-none" style="display: none;">
+                <i class="bi bi-funnel-fill me-1"></i> Show Filters
+            </button>
+
+            <!-- Results Container -->
+            <div id="resultsContainer" class="results-content"></div>
+        </div>
     </div>
     
     <!-- Bootstrap JS -->

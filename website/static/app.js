@@ -14,6 +14,9 @@ const loadingIndicator = document.getElementById('loadingIndicator');
 const errorMessage = document.getElementById('errorMessage');
 const resultsContainer = document.getElementById('resultsContainer');
 const facetsContainer = document.getElementById('facetsContainer');
+const filterSidebar = document.getElementById('filterSidebar');
+const filterToggleMobile = document.getElementById('filterToggleMobile');
+const sidebarToggle = document.getElementById('sidebarToggle');
 const themeToggle = document.getElementById('themeToggle');
 const themeIcon = document.getElementById('themeIcon');
 const logo = document.getElementById('logo');
@@ -73,7 +76,15 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Theme toggle
     themeToggle.addEventListener('click', toggleTheme);
-    
+
+    // Sidebar toggle for mobile
+    if (filterToggleMobile) {
+        filterToggleMobile.addEventListener('click', openSidebar);
+    }
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', closeSidebar);
+    }
+
     // Set initial active button states
     const activeModeBtn = document.querySelector('.mode-btn.active');
     if (activeModeBtn) {
@@ -99,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.remove('btn-outline-primary');
             btn.classList.add('btn-primary');
             currentSearchMode = btn.dataset.mode;
-            
+
             // Update URL and re-search if there's a current query
             updateURL();
             if (currentQuery) {
@@ -123,8 +134,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Clear filters when switching indices
             currentFilters = {};
-            hideFacets();
-            
+
             // Update URL
             updateURL();
             
@@ -152,9 +162,9 @@ async function performSearch() {
             type: currentSearchMode,
             index: currentIndex
         };
-        
-        // Add filters if viewing flights
-        if (currentIndex === 'flights' && Object.keys(currentFilters).length > 0) {
+
+        // Add filters if any are set
+        if (Object.keys(currentFilters).length > 0) {
             requestBody.filters = currentFilters;
         }
         
@@ -261,16 +271,17 @@ function displayResults(data) {
             
         } else if (indexName === 'airlines') {
             // Airlines index - two field format
-            let airlineName = highlight['Airline_Name']?.[0] || '';
+            // Check for highlight on the .text subfield
+            let airlineName = highlight['Airline_Name.text']?.[0] || highlight['Airline_Name']?.[0] || '';
             let code = highlight['Reporting_Airline']?.[0] || '';
-            
+
             // Process highlights - replace <em> tags with highlight markup if highlights exist
             if (airlineName) {
                 airlineName = airlineName.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
             } else {
                 airlineName = source.Airline_Name || 'Unknown Airline';
             }
-            
+
             if (code) {
                 code = code.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
             } else {
@@ -341,10 +352,10 @@ function displayResults(data) {
         // Special formatting for airlines - two field format
         if (indexName === 'airlines') {
             html += `
-                <div class="result-item mb-3 pb-3 border-bottom">
-                    <div class="d-flex justify-content-between align-items-start mb-1">
-                        <h6 class="mb-0 fw-bold">
-                            <i class="bi bi-building text-primary me-2"></i>${title}
+                <div class="result-item result-item-airlines">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <h6 class="fw-bold">
+                            <i class="bi bi-building me-2"></i>${title}
                         </h6>
                         ${indexBadge}
                     </div>
@@ -356,18 +367,18 @@ function displayResults(data) {
         } else if (indexName === 'flights') {
             // Special formatting for flights - show route prominently
             html += `
-                <div class="result-item mb-3 pb-3 border-bottom">
-                    <div class="d-flex justify-content-between align-items-start mb-1">
-                        <h6 class="mb-0 fw-bold">
-                            <i class="bi bi-airplane text-primary me-2"></i>${title}
+                <div class="result-item result-item-flights">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <h6 class="fw-bold">
+                            <i class="bi bi-airplane me-2"></i>${title}
                         </h6>
                         ${indexBadge}
                     </div>
-                    <p class="mb-1 small">
-                        <i class="bi bi-geo-alt-fill text-primary me-1"></i><strong>Route:</strong> ${url}
+                    <p class="small">
+                        <i class="bi bi-geo-alt-fill me-1"></i><strong>Route:</strong> ${url}
                     </p>
-                    ${snippetHtml ? `<p class="small mb-1">${snippetHtml}</p>` : ''}
-                    ${meta.length > 0 ? `<small class="text-muted">
+                    ${snippetHtml ? `<p class="small">${snippetHtml}</p>` : ''}
+                    ${meta.length > 0 ? `<small class="text-muted d-block">
                         ${meta.map(m => {
                             if (m.includes('Flight ID')) return `<i class="bi bi-hash me-1"></i>${m}`;
                             if (m.includes('Tail Number')) return `<i class="bi bi-tag me-1"></i>${m}`;
@@ -379,15 +390,15 @@ function displayResults(data) {
             `;
         } else {
             html += `
-                <div class="result-item mb-3 pb-3 border-bottom">
-                    <div class="d-flex justify-content-between align-items-start mb-1">
-                        <h6 class="mb-0 fw-bold">
-                            <i class="bi bi-file-earmark-text text-primary me-2"></i>${escapeHtml(title)}
+                <div class="result-item result-item-contracts">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <h6 class="fw-bold">
+                            <i class="bi bi-file-earmark-text me-2"></i>${escapeHtml(title)}
                         </h6>
                         ${indexBadge}
                     </div>
-                    ${snippetHtml ? `<p class="small mb-1">${snippetHtml}</p>` : ''}
-                    ${meta.length > 0 ? `<small class="text-muted">
+                    ${snippetHtml ? `<p class="small">${snippetHtml}</p>` : ''}
+                    ${meta.length > 0 ? `<small class="text-muted d-block">
                         ${meta.map(m => {
                             if (m.includes('Uploaded')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;
                             if (m.includes('Author')) return `<i class="bi bi-person me-1"></i>${m}`;
@@ -420,172 +431,338 @@ function displayResults(data) {
     `;
     
     resultsContainer.innerHTML = html;
-    
-    // Display facets if viewing flights and aggregations are available
-    if (currentIndex === 'flights' && data.aggregations) {
-        displayFacets(data.aggregations);
-    } else {
-        hideFacets();
-    }
+
+    // Always display sidebar with index selector and facets
+    displayFacets(data.aggregations);
 }
 
 function displayFacets(aggregations) {
-    if (!aggregations || currentIndex !== 'flights') {
-        hideFacets();
-        return;
+    // Always show sidebar with at least index selector
+    let facetsHtml = '';
+
+    // Show active filters at the top
+    const activeFilters = Object.keys(currentFilters).filter(key => currentFilters[key] !== null && currentFilters[key] !== undefined);
+    if (activeFilters.length > 0) {
+        facetsHtml += '<div class="active-filters-section">';
+        facetsHtml += '<strong>Active Filters</strong>';
+        facetsHtml += '<div class="mt-2">';
+
+        // Flights filters
+        if (currentFilters.cancelled !== undefined) {
+            facetsHtml += `<div class="mb-1"><small>Cancelled: ${currentFilters.cancelled ? 'Yes' : 'No'}</small></div>`;
+        }
+        if (currentFilters.diverted !== undefined) {
+            facetsHtml += `<div class="mb-1"><small>Diverted: ${currentFilters.diverted ? 'Yes' : 'No'}</small></div>`;
+        }
+        if (currentFilters.airline) {
+            facetsHtml += `<div class="mb-1"><small>Airline: ${currentFilters.airline}</small></div>`;
+        }
+        if (currentFilters.origin) {
+            facetsHtml += `<div class="mb-1"><small>Origin: ${currentFilters.origin}</small></div>`;
+        }
+        if (currentFilters.dest) {
+            facetsHtml += `<div class="mb-1"><small>Destination: ${currentFilters.dest}</small></div>`;
+        }
+        if (currentFilters.flight_date) {
+            facetsHtml += `<div class="mb-1"><small>Date: ${currentFilters.flight_date}</small></div>`;
+        }
+
+        // Airlines filters
+        if (currentFilters.airline_code) {
+            facetsHtml += `<div class="mb-1"><small>Airline Code: ${currentFilters.airline_code}</small></div>`;
+        }
+
+        // Contracts filters
+        if (currentFilters.author) {
+            facetsHtml += `<div class="mb-1"><small>Author: ${currentFilters.author}</small></div>`;
+        }
+        if (currentFilters.upload_year) {
+            facetsHtml += `<div class="mb-1"><small>Upload Year: ${currentFilters.upload_year}</small></div>`;
+        }
+
+        facetsHtml += '</div>';
+        facetsHtml += '<button class="btn btn-sm btn-outline-danger w-100 mt-2" onclick="clearFilters()"><i class="bi bi-x-circle me-1"></i> Clear All</button>';
+        facetsHtml += '</div>';
     }
-    
-    let facetsHtml = '<div class="row"><div class="col-12"><h6 class="mb-3"><i class="bi bi-funnel-fill me-2"></i>Filter Results</h6></div></div>';
-    facetsHtml += '<div class="row g-3">';
-    
-    // Cancelled facet
-    if (aggregations.cancelled && aggregations.cancelled.buckets) {
-        facetsHtml += '<div class="col-md-6 col-lg-3">';
-        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
-        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-x-circle me-1"></i>Cancelled</h6>';
+
+    // Index selector (always visible)
+    facetsHtml += '<div class="filter-section">';
+    facetsHtml += '<div class="filter-title"><i class="bi bi-collection me-2"></i>Index</div>';
+
+    // Define all indices
+    const indices = [
+        { key: 'all', label: 'All Indices' },
+        { key: 'flights', label: 'Flights' },
+        { key: 'airlines', label: 'Airlines' },
+        { key: 'contracts', label: 'Contracts' }
+    ];
+
+    indices.forEach(index => {
+        const isActive = currentIndex === index.key;
+        const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+
+        // Show counts if we're on "all" and have aggregations
+        let countDisplay = '';
+        if (currentIndex === 'all' && aggregations.record_types && aggregations.record_types.buckets) {
+            const bucket = aggregations.record_types.buckets.find(b => b.key === index.key);
+            if (bucket && bucket.doc_count > 0) {
+                countDisplay = ` <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>`;
+            }
+        }
+
+        facetsHtml += `
+            <button class="btn btn-sm ${activeClass} facet-btn index-switch-btn"
+                    data-index="${escapeHtml(index.key)}">
+                <strong>${index.label}</strong>${countDisplay}
+            </button>
+        `;
+    });
+
+    facetsHtml += '</div>';
+
+    // Flights-specific facets
+    if (currentIndex === 'flights') {
+        // Cancelled facet
+        if (aggregations.cancelled && aggregations.cancelled.buckets) {
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-slash-circle me-2"></i>Cancelled</div>';
         aggregations.cancelled.buckets.forEach(bucket => {
-            const isCancelled = bucket.key === true || bucket.key === 'true';
+            // Handle various boolean representations
+            const isCancelled = bucket.key === true || bucket.key === 'true' || bucket.key === 1 || bucket.key === '1';
             const isActive = currentFilters.cancelled === isCancelled;
             const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            const label = isCancelled ? 'Yes' : 'No';
             facetsHtml += `
-                <button class="btn btn-sm ${activeClass} w-100 mb-1 facet-btn" 
-                        data-facet="cancelled" 
+                <button class="btn btn-sm ${activeClass} facet-btn"
+                        data-facet="cancelled"
                         data-value="${isCancelled}">
-                    ${isCancelled ? 'Yes' : 'No'} <span class="badge bg-light text-dark">${bucket.doc_count}</span>
+                    <strong>${label}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
-        facetsHtml += '</div></div></div>';
+        facetsHtml += '</div>';
     }
-    
+
     // Diverted facet
     if (aggregations.diverted && aggregations.diverted.buckets) {
-        facetsHtml += '<div class="col-md-6 col-lg-3">';
-        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
-        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-arrow-repeat me-1"></i>Diverted</h6>';
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-arrow-repeat me-2"></i>Diverted</div>';
         aggregations.diverted.buckets.forEach(bucket => {
-            const isDiverted = bucket.key === true || bucket.key === 'true';
+            // Handle various boolean representations
+            const isDiverted = bucket.key === true || bucket.key === 'true' || bucket.key === 1 || bucket.key === '1';
             const isActive = currentFilters.diverted === isDiverted;
             const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            const label = isDiverted ? 'Yes' : 'No';
             facetsHtml += `
-                <button class="btn btn-sm ${activeClass} w-100 mb-1 facet-btn" 
-                        data-facet="diverted" 
+                <button class="btn btn-sm ${activeClass} facet-btn"
+                        data-facet="diverted"
                         data-value="${isDiverted}">
-                    ${isDiverted ? 'Yes' : 'No'} <span class="badge bg-light text-dark">${bucket.doc_count}</span>
+                    <strong>${label}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
-        facetsHtml += '</div></div></div>';
+        facetsHtml += '</div>';
     }
-    
+
     // Airlines facet
     if (aggregations.airlines && aggregations.airlines.buckets && aggregations.airlines.buckets.length > 0) {
-        facetsHtml += '<div class="col-md-6 col-lg-3">';
-        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
-        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-building me-1"></i>Airline</h6>';
-        facetsHtml += '<div style="max-height: 200px; overflow-y: auto;">';
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-building me-2"></i>Airline</div>';
+        facetsHtml += '<div class="scrollable-filters">';
         aggregations.airlines.buckets.forEach(bucket => {
             const isActive = currentFilters.airline === bucket.key;
             const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
             facetsHtml += `
-                <button class="btn btn-sm ${activeClass} w-100 mb-1 text-start facet-btn" 
-                        data-facet="airline" 
+                <button class="btn btn-sm ${activeClass} facet-btn"
+                        data-facet="airline"
                         data-value="${escapeHtml(bucket.key)}">
-                    ${escapeHtml(bucket.key)} <span class="badge bg-light text-dark float-end">${bucket.doc_count}</span>
+                    <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
-        facetsHtml += '</div></div></div></div>';
+        facetsHtml += '</div></div>';
     }
-    
+
     // Origins facet
     if (aggregations.origins && aggregations.origins.buckets && aggregations.origins.buckets.length > 0) {
-        facetsHtml += '<div class="col-md-6 col-lg-3">';
-        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
-        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-geo-alt me-1"></i>Origin</h6>';
-        facetsHtml += '<div style="max-height: 200px; overflow-y: auto;">';
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-geo-alt me-2"></i>Origin</div>';
+        facetsHtml += '<div class="scrollable-filters">';
         aggregations.origins.buckets.forEach(bucket => {
             const isActive = currentFilters.origin === bucket.key;
             const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
             facetsHtml += `
-                <button class="btn btn-sm ${activeClass} w-100 mb-1 text-start facet-btn" 
-                        data-facet="origin" 
+                <button class="btn btn-sm ${activeClass} facet-btn"
+                        data-facet="origin"
                         data-value="${escapeHtml(bucket.key)}">
-                    ${escapeHtml(bucket.key)} <span class="badge bg-light text-dark float-end">${bucket.doc_count}</span>
+                    <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
-        facetsHtml += '</div></div></div></div>';
+        facetsHtml += '</div></div>';
     }
-    
+
     // Destinations facet
     if (aggregations.destinations && aggregations.destinations.buckets && aggregations.destinations.buckets.length > 0) {
-        facetsHtml += '<div class="col-md-6 col-lg-3">';
-        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
-        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-geo-alt-fill me-1"></i>Destination</h6>';
-        facetsHtml += '<div style="max-height: 200px; overflow-y: auto;">';
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-geo-alt-fill me-2"></i>Destination</div>';
+        facetsHtml += '<div class="scrollable-filters">';
         aggregations.destinations.buckets.forEach(bucket => {
             const isActive = currentFilters.dest === bucket.key;
             const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
             facetsHtml += `
-                <button class="btn btn-sm ${activeClass} w-100 mb-1 text-start facet-btn" 
-                        data-facet="dest" 
+                <button class="btn btn-sm ${activeClass} facet-btn"
+                        data-facet="dest"
                         data-value="${escapeHtml(bucket.key)}">
-                    ${escapeHtml(bucket.key)} <span class="badge bg-light text-dark float-end">${bucket.doc_count}</span>
+                    <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
-        facetsHtml += '</div></div></div></div>';
+        facetsHtml += '</div></div>';
+        }
+
+    // Flight dates facet
+    if (aggregations.flight_dates && aggregations.flight_dates.buckets && aggregations.flight_dates.buckets.length > 0) {
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-calendar-event me-2"></i>Flight Date</div>';
+        facetsHtml += '<div class="scrollable-filters">';
+        aggregations.flight_dates.buckets.forEach(bucket => {
+            if (bucket.doc_count > 0) {
+                const isActive = currentFilters.flight_date === bucket.key_as_string;
+                const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+                facetsHtml += `
+                    <button class="btn btn-sm ${activeClass} facet-btn"
+                            data-facet="flight_date"
+                            data-value="${escapeHtml(bucket.key_as_string)}">
+                        <strong>${escapeHtml(bucket.key_as_string)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    </button>
+                `;
+            }
+        });
+        facetsHtml += '</div></div>';
+        }
     }
-    
-    facetsHtml += '</div>';
-    
-    // Show active filters
-    const activeFilters = Object.keys(currentFilters).filter(key => currentFilters[key] !== null && currentFilters[key] !== undefined);
-    if (activeFilters.length > 0) {
-        facetsHtml += '<div class="mt-3"><strong>Active Filters:</strong> ';
-        const filterLabels = [];
-        if (currentFilters.cancelled !== undefined) {
-            filterLabels.push(`Cancelled: ${currentFilters.cancelled ? 'Yes' : 'No'}`);
+
+    // Airlines-specific facets
+    if (currentIndex === 'airlines') {
+        // Airline codes facet
+        if (aggregations.airline_codes && aggregations.airline_codes.buckets && aggregations.airline_codes.buckets.length > 0) {
+            facetsHtml += '<div class="filter-section">';
+            facetsHtml += '<div class="filter-title"><i class="bi bi-tag me-2"></i>Airline Code</div>';
+            facetsHtml += '<div class="scrollable-filters">';
+            aggregations.airline_codes.buckets.forEach(bucket => {
+                const isActive = currentFilters.airline_code === bucket.key;
+                const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+                facetsHtml += `
+                    <button class="btn btn-sm ${activeClass} facet-btn"
+                            data-facet="airline_code"
+                            data-value="${escapeHtml(bucket.key)}">
+                        <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    </button>
+                `;
+            });
+            facetsHtml += '</div></div>';
         }
-        if (currentFilters.diverted !== undefined) {
-            filterLabels.push(`Diverted: ${currentFilters.diverted ? 'Yes' : 'No'}`);
-        }
-        if (currentFilters.airline) {
-            filterLabels.push(`Airline: ${currentFilters.airline}`);
-        }
-        if (currentFilters.origin) {
-            filterLabels.push(`Origin: ${currentFilters.origin}`);
-        }
-        if (currentFilters.dest) {
-            filterLabels.push(`Destination: ${currentFilters.dest}`);
-        }
-        facetsHtml += filterLabels.join(' | ');
-        facetsHtml += ' <button class="btn btn-sm btn-outline-danger ms-2" onclick="clearFilters()"><i class="bi bi-x-circle"></i> Clear All</button>';
-        facetsHtml += '</div>';
     }
-    
+
+    // Contracts-specific facets
+    if (currentIndex === 'contracts') {
+        // Authors facet
+        if (aggregations.authors && aggregations.authors.buckets && aggregations.authors.buckets.length > 0) {
+            facetsHtml += '<div class="filter-section">';
+            facetsHtml += '<div class="filter-title"><i class="bi bi-person me-2"></i>Author</div>';
+            facetsHtml += '<div class="scrollable-filters">';
+            aggregations.authors.buckets.forEach(bucket => {
+                const isActive = currentFilters.author === bucket.key;
+                const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+                facetsHtml += `
+                    <button class="btn btn-sm ${activeClass} facet-btn"
+                            data-facet="author"
+                            data-value="${escapeHtml(bucket.key)}">
+                        <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    </button>
+                `;
+            });
+            facetsHtml += '</div></div>';
+        }
+
+        // Upload years facet
+        if (aggregations.upload_years && aggregations.upload_years.buckets && aggregations.upload_years.buckets.length > 0) {
+            facetsHtml += '<div class="filter-section">';
+            facetsHtml += '<div class="filter-title"><i class="bi bi-calendar3 me-2"></i>Upload Year</div>';
+            aggregations.upload_years.buckets.forEach(bucket => {
+                const isActive = currentFilters.upload_year === bucket.key_as_string;
+                const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+                facetsHtml += `
+                    <button class="btn btn-sm ${activeClass} facet-btn"
+                            data-facet="upload_year"
+                            data-value="${escapeHtml(bucket.key_as_string)}">
+                        <strong>${escapeHtml(bucket.key_as_string)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    </button>
+                `;
+            });
+            facetsHtml += '</div>';
+        }
+    }
+
     facetsContainer.innerHTML = facetsHtml;
-    facetsContainer.style.display = 'block';
-    
+
+    // Show sidebar on first render only (avoid flickering)
+    if (filterSidebar.style.display !== 'block') {
+        filterSidebar.style.display = 'block';
+        filterToggleMobile.style.display = 'block';
+    }
+
     // Attach event listeners to facet buttons
-    facetsContainer.querySelectorAll('.facet-btn').forEach(btn => {
+    facetsContainer.querySelectorAll('.facet-btn:not(.index-switch-btn)').forEach(btn => {
         btn.addEventListener('click', function() {
             const facetName = this.dataset.facet;
             let value = this.dataset.value;
-            
+
             // Convert string booleans to actual booleans
             if (value === 'true') value = true;
             if (value === 'false') value = false;
-            
+
             toggleFacet(facetName, value);
+        });
+    });
+
+    // Attach event listeners to index switch buttons
+    facetsContainer.querySelectorAll('.index-switch-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const newIndex = this.dataset.index;
+            switchToIndex(newIndex);
         });
     });
 }
 
 function hideFacets() {
-    facetsContainer.style.display = 'none';
+    filterSidebar.style.display = 'none';
+    filterToggleMobile.style.display = 'none';
     facetsContainer.innerHTML = '';
+    closeSidebar();
+}
+
+function openSidebar() {
+    filterSidebar.classList.add('show');
+    // Create overlay for mobile
+    let overlay = document.querySelector('.sidebar-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'sidebar-overlay';
+        overlay.addEventListener('click', closeSidebar);
+        document.body.appendChild(overlay);
+    }
+    setTimeout(() => overlay.classList.add('show'), 10);
+}
+
+function closeSidebar() {
+    filterSidebar.classList.remove('show');
+    const overlay = document.querySelector('.sidebar-overlay');
+    if (overlay) {
+        overlay.classList.remove('show');
+        setTimeout(() => overlay.remove(), 300);
+    }
 }
 
 function toggleFacet(facetName, value) {
@@ -596,8 +773,33 @@ function toggleFacet(facetName, value) {
         // Set filter
         currentFilters[facetName] = value;
     }
-    
+
     // Perform search with updated filters
+    performSearch();
+}
+
+function switchToIndex(newIndex) {
+    // Clear filters when switching indices
+    currentFilters = {};
+
+    // Update the active index button
+    indexButtons.forEach(btn => {
+        btn.classList.remove('active');
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-outline-primary');
+        if (btn.dataset.index === newIndex) {
+            btn.classList.add('active');
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-primary');
+        }
+    });
+
+    currentIndex = newIndex;
+
+    // Update URL
+    updateURL();
+
+    // Perform search
     performSearch();
 }
 
@@ -631,17 +833,51 @@ function resetSearch() {
     // Clear search input
     searchInput.value = '';
     currentQuery = '';
-    
+
+    // Clear all filters
+    currentFilters = {};
+
+    // Reset to default search mode (BM25)
+    currentSearchMode = 'bm25';
+    modeButtons.forEach(btn => {
+        if (btn.dataset.mode === 'bm25') {
+            btn.classList.add('active');
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-primary');
+        } else {
+            btn.classList.remove('active');
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-outline-primary');
+        }
+    });
+
+    // Reset to default index (all)
+    currentIndex = 'all';
+    indexButtons.forEach(btn => {
+        if (btn.dataset.index === 'all') {
+            btn.classList.add('active');
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-primary');
+        } else {
+            btn.classList.remove('active');
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-outline-primary');
+        }
+    });
+
     // Clear results
     clearResults();
-    
+
     // Hide loading and error messages
     hideLoading();
     hideError();
-    
-    // Update URL (keeps type and index, removes query)
+
+    // Hide sidebar
+    hideFacets();
+
+    // Update URL (clears all parameters)
     updateURL();
-    
+
     // Focus back on search input
     searchInput.focus();
 }
@@ -658,11 +894,25 @@ function updateURL() {
     if (currentIndex) {
         params.set('index', currentIndex);
     }
-    
-    const newURL = params.toString() 
+
+    // Add filters to URL
+    Object.keys(currentFilters).forEach(key => {
+        const value = currentFilters[key];
+        if (value !== null && value !== undefined) {
+            if (typeof value === 'boolean') {
+                params.set(key, value.toString());
+            } else if (Array.isArray(value)) {
+                params.set(key, value.join(','));
+            } else {
+                params.set(key, value.toString());
+            }
+        }
+    });
+
+    const newURL = params.toString()
         ? `${window.location.pathname}?${params.toString()}`
         : window.location.pathname;
-    
+
     window.history.pushState({}, '', newURL);
 }
 
@@ -671,7 +921,7 @@ function restoreSearchFromURL() {
     const query = params.get('q');
     const type = params.get('type');
     const index = params.get('index');
-    
+
     // Restore search mode (even if no query)
     if (type && ['bm25', 'semantic', 'ai'].includes(type)) {
         currentSearchMode = type;
@@ -688,7 +938,7 @@ function restoreSearchFromURL() {
             }
         });
     }
-    
+
     // Restore index selection (even if no query)
     if (index && ['all', 'flights', 'airlines', 'contracts'].includes(index)) {
         currentIndex = index;
@@ -705,12 +955,29 @@ function restoreSearchFromURL() {
             }
         });
     }
-    
+
+    // Restore filters from URL
+    currentFilters = {};
+    const filterKeys = ['cancelled', 'diverted', 'airline', 'origin', 'dest', 'flight_date', 'airline_code', 'author', 'upload_year'];
+    filterKeys.forEach(key => {
+        const value = params.get(key);
+        if (value !== null) {
+            // Convert boolean strings to actual booleans
+            if (value === 'true') {
+                currentFilters[key] = true;
+            } else if (value === 'false') {
+                currentFilters[key] = false;
+            } else {
+                currentFilters[key] = value;
+            }
+        }
+    });
+
     if (query) {
         // Restore search input
         searchInput.value = query;
         currentQuery = query;
-        
+
         // Perform the search
         performSearch();
     } else {

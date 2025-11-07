@@ -146,9 +146,9 @@ def search():
         elif index_name == 'flights':
             results = search_flights(query, search_type, size, filters)
         elif index_name == 'airlines':
-            results = search_airlines(query, search_type, size)
+            results = search_airlines(query, search_type, size, filters)
         elif index_name == 'contracts':
-            results = search_contracts(query, search_type, size)
+            results = search_contracts(query, search_type, size, filters)
         else:
             return jsonify({'error': f'Unknown index: {index_name}'}), 400
         
@@ -182,7 +182,8 @@ def search_all_indices(query: str, search_type: str, size: int = 20, filters: Op
     total_hits = 0
     successful_indices = []
     failed_indices = []
-    
+    index_counts = {'flights': 0, 'airlines': 0, 'contracts': 0}
+
     # Calculate size per index (ensure at least 1)
     size_per_index = max(1, size // len(indices))
     
@@ -191,9 +192,9 @@ def search_all_indices(query: str, search_type: str, size: int = 20, filters: Op
             if index == 'flights':
                 result = search_flights(query, search_type, size_per_index, filters)
             elif index == 'airlines':
-                result = search_airlines(query, search_type, size_per_index)
+                result = search_airlines(query, search_type, size_per_index, filters)
             else:  # contracts
-                result = search_contracts(query, search_type, size_per_index)
+                result = search_contracts(query, search_type, size_per_index, filters)
             
             if result.get('hits', {}).get('hits'):
                 for hit in result['hits']['hits']:
@@ -202,14 +203,17 @@ def search_all_indices(query: str, search_type: str, size: int = 20, filters: Op
                     if '_index' not in hit or not hit['_index']:
                         hit['_index'] = index
                     all_hits.append(hit)
-                
+
                 # Extract total count
                 result_total = result.get('hits', {}).get('total', 0)
                 if isinstance(result_total, dict):
-                    total_hits += result_total.get('value', 0)
+                    count = result_total.get('value', 0)
+                    total_hits += count
+                    index_counts[index] = count
                 else:
                     total_hits += result_total
-            
+                    index_counts[index] = result_total
+
             successful_indices.append(index)
         except urllib_error.HTTPError as e:
             # Check if it's an index_not_found_exception
@@ -233,20 +237,29 @@ def search_all_indices(query: str, search_type: str, size: int = 20, filters: Op
     # Sort by score (if available) and limit to size
     all_hits.sort(key=lambda x: x.get('_score', 0), reverse=True)
     all_hits = all_hits[:size]
-    
+
     result = {
         'hits': {
             'total': {'value': total_hits, 'relation': 'eq'},
             'hits': all_hits
         },
         'search_type': search_type,
-        'searched_indices': successful_indices
+        'searched_indices': successful_indices,
+        'aggregations': {
+            'record_types': {
+                'buckets': [
+                    {'key': 'flights', 'doc_count': index_counts['flights']},
+                    {'key': 'airlines', 'doc_count': index_counts['airlines']},
+                    {'key': 'contracts', 'doc_count': index_counts['contracts']}
+                ]
+            }
+        }
     }
-    
+
     # Add warning if some indices failed
     if failed_indices:
         result['warnings'] = [f"Index '{idx}' not found" for idx in failed_indices]
-    
+
     return result
 
 
@@ -283,7 +296,17 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
             filter_clauses.append({"term": {"Origin": filters['origin']}})
         if filters.get('dest'):
             filter_clauses.append({"term": {"Dest": filters['dest']}})
-        
+        if filters.get('flight_date'):
+            # Filter by specific date (day range)
+            filter_clauses.append({
+                "range": {
+                    "@timestamp": {
+                        "gte": f"{filters['flight_date']}T00:00:00",
+                        "lt": f"{filters['flight_date']}T23:59:59"
+                    }
+                }
+            })
+
         if filter_clauses:
             query_clause = {
                 "bool": {
@@ -325,6 +348,14 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
             },
             "destinations": {
                 "terms": {"field": "Dest", "size": 20, "order": {"_count": "desc"}}
+            },
+            "flight_dates": {
+                "date_histogram": {
+                    "field": "@timestamp",
+                    "calendar_interval": "day",
+                    "format": "yyyy-MM-dd",
+                    "order": {"_key": "desc"}
+                }
             }
         }
     }
@@ -332,14 +363,15 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
     return make_es_request('POST', '/flights-*/_search', body)
 
 
-def search_airlines(query: str, search_type: str, size: int = 20) -> Dict:
+def search_airlines(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Search airlines index."""
     if query:
+        # Use .text subfield for full-text search on the text-searchable field
         query_clause = {
             "multi_match": {
                 "query": query,
                 "fields": [
-                    "Airline_Name^2",
+                    "Airline_Name.text^2",
                     "Reporting_Airline^1.5"
                 ],
                 "type": "best_fields",
@@ -348,7 +380,21 @@ def search_airlines(query: str, search_type: str, size: int = 20) -> Dict:
         }
     else:
         query_clause = {"match_all": {}}
-    
+
+    # Add filters if provided
+    if filters:
+        filter_clauses = []
+        if filters.get('airline_code'):
+            filter_clauses.append({"term": {"Reporting_Airline": filters['airline_code']}})
+
+        if filter_clauses:
+            query_clause = {
+                "bool": {
+                    "must": [query_clause],
+                    "filter": filter_clauses
+                }
+            }
+
     body = {
         "query": query_clause,
         "size": size,
@@ -357,26 +403,31 @@ def search_airlines(query: str, search_type: str, size: int = 20) -> Dict:
         },
         "highlight": {
             "fields": {
-                "Airline_Name": {},
+                "Airline_Name.text": {},
                 "Reporting_Airline": {}
+            }
+        },
+        "aggs": {
+            "airline_codes": {
+                "terms": {"field": "Reporting_Airline", "size": 50, "order": {"_key": "asc"}}
             }
         }
     }
-    
+
     return make_es_request('POST', '/airlines/_search', body)
 
 
-def search_contracts(query: str, search_type: str, size: int = 20) -> Dict:
+def search_contracts(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Search contracts index."""
     if search_type == 'semantic':
-        return semantic_search(query, size)
+        return semantic_search(query, size, filters)
     elif search_type == 'ai':
-        return ai_agent_search(query, size)
+        return ai_agent_search(query, size, filters)
     else:  # bm25
-        return bm25_search(query, size)
+        return bm25_search(query, size, filters)
 
 
-def bm25_search(query: str, size: int = 20) -> Dict:
+def bm25_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Perform BM25 (keyword) search on contracts index."""
     if query:
         query_clause = {
@@ -394,7 +445,30 @@ def bm25_search(query: str, size: int = 20) -> Dict:
         }
     else:
         query_clause = {"match_all": {}}
-    
+
+    # Add filters if provided
+    if filters:
+        filter_clauses = []
+        if filters.get('author'):
+            filter_clauses.append({"term": {"attachment.author.keyword": filters['author']}})
+        if filters.get('upload_year'):
+            filter_clauses.append({
+                "range": {
+                    "upload_date": {
+                        "gte": f"{filters['upload_year']}-01-01",
+                        "lt": f"{int(filters['upload_year']) + 1}-01-01"
+                    }
+                }
+            })
+
+        if filter_clauses:
+            query_clause = {
+                "bool": {
+                    "must": [query_clause],
+                    "filter": filter_clauses
+                }
+            }
+
     body = {
         "query": query_clause,
         "size": size,
@@ -409,13 +483,26 @@ def bm25_search(query: str, size: int = 20) -> Dict:
                 },
                 "attachment.title": {}
             }
+        },
+        "aggs": {
+            "authors": {
+                "terms": {"field": "attachment.author.keyword", "size": 20, "order": {"_count": "desc"}}
+            },
+            "upload_years": {
+                "date_histogram": {
+                    "field": "upload_date",
+                    "calendar_interval": "year",
+                    "format": "yyyy",
+                    "order": {"_key": "desc"}
+                }
+            }
         }
     }
-    
+
     return make_es_request('POST', '/contracts/_search', body)
 
 
-def semantic_search(query: str, size: int = 20) -> Dict:
+def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Perform semantic search using semantic_content field."""
     if query:
         query_clause = {
@@ -441,7 +528,39 @@ def semantic_search(query: str, size: int = 20) -> Dict:
         }
     else:
         query_clause = {"match_all": {}}
-    
+
+    # Add filters if provided
+    if filters:
+        filter_clauses = []
+        if filters.get('author'):
+            filter_clauses.append({"term": {"attachment.author.keyword": filters['author']}})
+        if filters.get('upload_year'):
+            filter_clauses.append({
+                "range": {
+                    "upload_date": {
+                        "gte": f"{filters['upload_year']}-01-01",
+                        "lt": f"{int(filters['upload_year']) + 1}-01-01"
+                    }
+                }
+            })
+
+        if filter_clauses:
+            # Wrap the existing query in a bool query with filters
+            if query:
+                query_clause = {
+                    "bool": {
+                        "must": [query_clause],
+                        "filter": filter_clauses
+                    }
+                }
+            else:
+                query_clause = {
+                    "bool": {
+                        "must": [{"match_all": {}}],
+                        "filter": filter_clauses
+                    }
+                }
+
     body = {
         "query": query_clause,
         "size": size,
@@ -460,15 +579,28 @@ def semantic_search(query: str, size: int = 20) -> Dict:
                     "number_of_fragments": 2
                 }
             }
+        },
+        "aggs": {
+            "authors": {
+                "terms": {"field": "attachment.author.keyword", "size": 20, "order": {"_count": "desc"}}
+            },
+            "upload_years": {
+                "date_histogram": {
+                    "field": "upload_date",
+                    "calendar_interval": "year",
+                    "format": "yyyy",
+                    "order": {"_key": "desc"}
+                }
+            }
         }
     }
-    
+
     return make_es_request('POST', '/contracts/_search', body)
 
 
-def ai_agent_search(query: str, size: int = 20) -> Dict:
+def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Perform AI Agent Builder search with tool calling.
-    
+
     This uses a hybrid approach combining semantic and BM25 search,
     and can optionally use Elasticsearch inference API for enhanced results.
     """
@@ -502,7 +634,39 @@ def ai_agent_search(query: str, size: int = 20) -> Dict:
         }
     else:
         query_clause = {"match_all": {}}
-    
+
+    # Add filters if provided
+    if filters:
+        filter_clauses = []
+        if filters.get('author'):
+            filter_clauses.append({"term": {"attachment.author.keyword": filters['author']}})
+        if filters.get('upload_year'):
+            filter_clauses.append({
+                "range": {
+                    "upload_date": {
+                        "gte": f"{filters['upload_year']}-01-01",
+                        "lt": f"{int(filters['upload_year']) + 1}-01-01"
+                    }
+                }
+            })
+
+        if filter_clauses:
+            # Wrap the existing query in a bool query with filters
+            if query:
+                query_clause = {
+                    "bool": {
+                        "must": [query_clause],
+                        "filter": filter_clauses
+                    }
+                }
+            else:
+                query_clause = {
+                    "bool": {
+                        "must": [{"match_all": {}}],
+                        "filter": filter_clauses
+                    }
+                }
+
     body = {
         "query": query_clause,
         "size": size,
@@ -521,13 +685,26 @@ def ai_agent_search(query: str, size: int = 20) -> Dict:
                     "number_of_fragments": 2
                 }
             }
+        },
+        "aggs": {
+            "authors": {
+                "terms": {"field": "attachment.author.keyword", "size": 20, "order": {"_count": "desc"}}
+            },
+            "upload_years": {
+                "date_histogram": {
+                    "field": "upload_date",
+                    "calendar_interval": "year",
+                    "format": "yyyy",
+                    "order": {"_key": "desc"}
+                }
+            }
         }
     }
-    
+
     # Only use RRF when there's a query (it's not needed for match_all)
     if query:
         body["rank"] = {"rrf": {}}
-    
+
     try:
         results = make_es_request('POST', '/contracts/_search', body)
         results['search_type'] = 'ai_agent'
@@ -545,11 +722,11 @@ def ai_agent_search(query: str, size: int = 20) -> Dict:
                 return results
             except Exception as e2:
                 LOGGER.warning(f"Hybrid search failed, falling back to semantic: {e2}")
-                return semantic_search(query, size)
+                return semantic_search(query, size, filters)
         else:
             # Fallback to semantic search if hybrid fails for other reasons
             LOGGER.warning(f"Hybrid search failed, falling back to semantic: {e}")
-            return semantic_search(query, size)
+            return semantic_search(query, size, filters)
 
 
 if __name__ == '__main__':

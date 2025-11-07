@@ -1,0 +1,25 @@
+{
+  "settings": {
+    "index": {
+      "mode": "lookup"
+    }
+  },
+  "mappings": {
+    "properties": {
+      "Reporting_Airline": {
+        "type": "keyword"
+      },
+      "Airline_Name": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          },
+          "semantic": {
+            "type": "semantic_text"
+          }
+        }
+      }
+    }
+  }
+}

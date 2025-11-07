@@ -11,25 +11,6 @@ require 'logger'
 require 'openssl'
 require 'zlib'
 
-# Embedded mapping for airlines index
-AIRLINES_MAPPING = {
-  'settings' => {
-    'index' => {
-      'mode' => 'lookup'
-    }
-  },
-  'mappings' => {
-    'properties' => {
-      'Reporting_Airline' => {
-        'type' => 'keyword'
-      },
-      'Airline_Name' => {
-        'type' => 'keyword'
-      }
-    }
-  }
-}.freeze
-
 class ElasticsearchClient
   def initialize(config, logger:)
     endpoint = config.fetch('endpoint') do
@@ -190,7 +171,16 @@ class AirlinesLoader
       @client.delete_index(@index)
     end
 
-    @client.create_index(@index, AIRLINES_MAPPING)
+    mapping = load_mapping('config/mappings-airlines.json')
+    @client.create_index(@index, mapping)
+  end
+
+  def load_mapping(path)
+    JSON.parse(File.read(path))
+  rescue Errno::ENOENT
+    raise "Mapping file not found: #{path}"
+  rescue JSON::ParserError => e
+    raise "Invalid JSON in mapping file #{path}: #{e.message}"
   end
 
   def import_file(file_path)
