@@ -134,6 +134,7 @@ def search():
     search_type = data.get('type', 'bm25')
     query = data.get('query', '').strip()
     index_name = data.get('index', 'all')  # 'all', 'flights', 'airlines', or 'contracts'
+    filters = data.get('filters', {})  # Extract filters from request
     
     try:
         # When no query, load 10 documents
@@ -141,9 +142,9 @@ def search():
         
         if index_name == 'all':
             # Search all indices and combine results
-            results = search_all_indices(query, search_type, size)
+            results = search_all_indices(query, search_type, size, filters)
         elif index_name == 'flights':
-            results = search_flights(query, search_type, size)
+            results = search_flights(query, search_type, size, filters)
         elif index_name == 'airlines':
             results = search_airlines(query, search_type, size)
         elif index_name == 'contracts':
@@ -157,7 +158,15 @@ def search():
         LOGGER.error(f"Elasticsearch HTTP error: {e.code} - {error_body}")
         try:
             error_json = json.loads(error_body) if error_body else {}
-            error_msg = error_json.get('error', {}).get('root_cause', [{}])[0].get('reason', error_body)
+            error_type = error_json.get('error', {}).get('type', '')
+            error_reason = error_json.get('error', {}).get('root_cause', [{}])[0].get('reason', error_body)
+            
+            # Handle index_not_found_exception specifically
+            if error_type == 'index_not_found_exception' or 'no such index' in error_reason.lower():
+                missing_index = error_json.get('error', {}).get('index', index_name)
+                error_msg = f"Index '{missing_index}' not found. Please ensure the index exists in Elasticsearch."
+            else:
+                error_msg = error_reason
         except:
             error_msg = f"Elasticsearch error: {e.code} {e.reason}"
         return jsonify({'error': error_msg}), 500
@@ -166,11 +175,13 @@ def search():
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
 
 
-def search_all_indices(query: str, search_type: str, size: int = 20) -> Dict:
+def search_all_indices(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Search across all indices (flights, airlines, contracts) and combine results."""
     indices = ['flights', 'airlines', 'contracts']
     all_hits = []
     total_hits = 0
+    successful_indices = []
+    failed_indices = []
     
     # Calculate size per index (ensure at least 1)
     size_per_index = max(1, size // len(indices))
@@ -178,7 +189,7 @@ def search_all_indices(query: str, search_type: str, size: int = 20) -> Dict:
     for index in indices:
         try:
             if index == 'flights':
-                result = search_flights(query, search_type, size_per_index)
+                result = search_flights(query, search_type, size_per_index, filters)
             elif index == 'airlines':
                 result = search_airlines(query, search_type, size_per_index)
             else:  # contracts
@@ -186,7 +197,10 @@ def search_all_indices(query: str, search_type: str, size: int = 20) -> Dict:
             
             if result.get('hits', {}).get('hits'):
                 for hit in result['hits']['hits']:
-                    hit['_index'] = index  # Tag each hit with its index
+                    # Preserve actual index name from Elasticsearch (e.g., flights-2019)
+                    # Only set if not already present
+                    if '_index' not in hit or not hit['_index']:
+                        hit['_index'] = index
                     all_hits.append(hit)
                 
                 # Extract total count
@@ -195,26 +209,49 @@ def search_all_indices(query: str, search_type: str, size: int = 20) -> Dict:
                     total_hits += result_total.get('value', 0)
                 else:
                     total_hits += result_total
+            
+            successful_indices.append(index)
+        except urllib_error.HTTPError as e:
+            # Check if it's an index_not_found_exception
+            error_body = e.read().decode('utf-8') if hasattr(e, 'read') else str(e)
+            try:
+                error_json = json.loads(error_body) if error_body else {}
+                error_type = error_json.get('error', {}).get('type', '')
+                if error_type == 'index_not_found_exception':
+                    LOGGER.warning(f"Index '{index}' not found, skipping")
+                    failed_indices.append(index)
+                    continue
+            except:
+                pass
+            # Re-raise if it's not an index_not_found_exception
+            raise
         except Exception as e:
             LOGGER.warning(f"Error searching {index} index: {e}")
+            failed_indices.append(index)
             continue
     
     # Sort by score (if available) and limit to size
     all_hits.sort(key=lambda x: x.get('_score', 0), reverse=True)
     all_hits = all_hits[:size]
     
-    return {
+    result = {
         'hits': {
             'total': {'value': total_hits, 'relation': 'eq'},
             'hits': all_hits
         },
         'search_type': search_type,
-        'searched_indices': indices
+        'searched_indices': successful_indices
     }
+    
+    # Add warning if some indices failed
+    if failed_indices:
+        result['warnings'] = [f"Index '{idx}' not found" for idx in failed_indices]
+    
+    return result
 
 
-def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
-    """Search flights index."""
+def search_flights(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
+    """Search flights indices using pattern 'flights-*' (e.g., flights-2019, flights-2020)."""
     if query:
         query_clause = {
             "multi_match": {
@@ -233,6 +270,28 @@ def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
     else:
         query_clause = {"match_all": {}}
     
+    # Add filters if provided
+    if filters:
+        filter_clauses = []
+        if filters.get('cancelled') is not None:
+            filter_clauses.append({"term": {"Cancelled": filters['cancelled']}})
+        if filters.get('diverted') is not None:
+            filter_clauses.append({"term": {"Diverted": filters['diverted']}})
+        if filters.get('airline'):
+            filter_clauses.append({"term": {"Reporting_Airline": filters['airline']}})
+        if filters.get('origin'):
+            filter_clauses.append({"term": {"Origin": filters['origin']}})
+        if filters.get('dest'):
+            filter_clauses.append({"term": {"Dest": filters['dest']}})
+        
+        if filter_clauses:
+            query_clause = {
+                "bool": {
+                    "must": [query_clause],
+                    "filter": filter_clauses
+                }
+            }
+    
     body = {
         "query": query_clause,
         "size": size,
@@ -240,7 +299,7 @@ def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
             "includes": [
                 "FlightID", "Reporting_Airline", "Flight_Number", "Origin", "Dest",
                 "CRSDepTimeLocal", "CRSArrTimeLocal", "DepDelayMin", "ArrDelayMin",
-                "Cancelled", "DistanceMiles", "@timestamp"
+                "Cancelled", "Diverted", "DistanceMiles", "@timestamp"
             ]
         },
         "highlight": {
@@ -250,10 +309,27 @@ def search_flights(query: str, search_type: str, size: int = 20) -> Dict:
                 "Origin": {},
                 "Dest": {}
             }
+        },
+        "aggs": {
+            "cancelled": {
+                "terms": {"field": "Cancelled", "size": 2}
+            },
+            "diverted": {
+                "terms": {"field": "Diverted", "size": 2}
+            },
+            "airlines": {
+                "terms": {"field": "Reporting_Airline", "size": 20, "order": {"_count": "desc"}}
+            },
+            "origins": {
+                "terms": {"field": "Origin", "size": 20, "order": {"_count": "desc"}}
+            },
+            "destinations": {
+                "terms": {"field": "Dest", "size": 20, "order": {"_count": "desc"}}
+            }
         }
     }
     
-    return make_es_request('POST', '/flights/_search', body)
+    return make_es_request('POST', '/flights-*/_search', body)
 
 
 def search_airlines(query: str, search_type: str, size: int = 20) -> Dict:

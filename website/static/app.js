@@ -3,6 +3,7 @@ let currentSearchMode = 'bm25';
 let currentQuery = '';
 let currentIndex = 'all';
 let searchTimeout = null;
+let currentFilters = {}; // Active filters for flights
 
 // DOM Elements
 const searchInput = document.getElementById('searchInput');
@@ -12,6 +13,7 @@ const indexButtons = document.querySelectorAll('.index-btn');
 const loadingIndicator = document.getElementById('loadingIndicator');
 const errorMessage = document.getElementById('errorMessage');
 const resultsContainer = document.getElementById('resultsContainer');
+const facetsContainer = document.getElementById('facetsContainer');
 const themeToggle = document.getElementById('themeToggle');
 const themeIcon = document.getElementById('themeIcon');
 const logo = document.getElementById('logo');
@@ -119,6 +121,10 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('btn-primary');
             currentIndex = btn.dataset.index;
             
+            // Clear filters when switching indices
+            currentFilters = {};
+            hideFacets();
+            
             // Update URL
             updateURL();
             
@@ -141,16 +147,23 @@ async function performSearch() {
     updateURL();
     
     try {
+        const requestBody = {
+            query: query,
+            type: currentSearchMode,
+            index: currentIndex
+        };
+        
+        // Add filters if viewing flights
+        if (currentIndex === 'flights' && Object.keys(currentFilters).length > 0) {
+            requestBody.filters = currentFilters;
+        }
+        
         const response = await fetch('/api/search', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                query: query,
-                type: currentSearchMode,
-                index: currentIndex
-            })
+            body: JSON.stringify(requestBody)
         });
         
         if (!response.ok) {
@@ -185,28 +198,55 @@ function displayResults(data) {
     hits.forEach(hit => {
         const source = hit._source || {};
         const highlight = hit.highlight || {};
-        const indexName = hit._index || 'unknown';
+        const rawIndexName = hit._index || currentIndex || 'unknown';
+        
+        // Normalize index name: flights-2019, flights-2020, etc. -> 'flights'
+        // Also handle 'all' case where currentIndex might be used
+        let indexName = rawIndexName;
+        if (rawIndexName.startsWith('flights-')) {
+            indexName = 'flights';
+        } else if (currentIndex === 'flights' && (rawIndexName === 'unknown' || !rawIndexName)) {
+            indexName = 'flights';
+        }
         
         let title, url, snippets, meta;
         
         // Format results based on index type
         if (indexName === 'flights') {
             // Flights index
-            const flightNum = highlight['Flight_Number']?.[0] || source.Flight_Number || '';
-            const airline = highlight['Reporting_Airline']?.[0] || source.Reporting_Airline || '';
-            const origin = highlight['Origin']?.[0] || source.Origin || '';
-            const dest = highlight['Dest']?.[0] || source.Dest || '';
+            let flightNum = highlight['Flight_Number']?.[0] || source.Flight_Number || '';
+            let airline = highlight['Reporting_Airline']?.[0] || source.Reporting_Airline || '';
+            let origin = highlight['Origin']?.[0] || source.Origin || '';
+            let dest = highlight['Dest']?.[0] || source.Dest || '';
             
-            title = `Flight ${flightNum || source.Flight_Number || 'N/A'}`;
-            url = `${source.Origin || 'N/A'} → ${source.Dest || 'N/A'}`;
+            // Process highlights - replace <em> tags with highlight markup
+            flightNum = flightNum.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
+            airline = airline.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
+            origin = origin.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
+            dest = dest.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
             
-            // Build snippet from flight details
+            // Fallback to source values if no highlights
+            if (!highlight['Flight_Number']?.[0]) flightNum = source.Flight_Number || 'N/A';
+            if (!highlight['Reporting_Airline']?.[0]) airline = source.Reporting_Airline || 'N/A';
+            if (!highlight['Origin']?.[0]) origin = source.Origin || 'N/A';
+            if (!highlight['Dest']?.[0]) dest = source.Dest || 'N/A';
+            
+            title = `Flight ${flightNum}`;
+            url = `${origin} → ${dest}`;
+            
+            // Build snippet from flight details with icons
             const parts = [];
-            if (airline) parts.push(`Airline: ${airline}`);
-            if (source.DepDelayMin !== undefined) parts.push(`Departure Delay: ${source.DepDelayMin} min`);
-            if (source.ArrDelayMin !== undefined) parts.push(`Arrival Delay: ${source.ArrDelayMin} min`);
-            if (source.DistanceMiles) parts.push(`Distance: ${source.DistanceMiles} miles`);
-            if (source.Cancelled) parts.push('Status: Cancelled');
+            if (airline) parts.push(`<i class="bi bi-airplane-engines me-1"></i>Airline: ${airline}`);
+            if (source.DepDelayMin !== undefined) {
+                const delayIcon = source.DepDelayMin > 0 ? 'bi-clock-history' : 'bi-clock';
+                parts.push(`<i class="bi ${delayIcon} me-1"></i>Departure Delay: ${source.DepDelayMin} min`);
+            }
+            if (source.ArrDelayMin !== undefined) {
+                const delayIcon = source.ArrDelayMin > 0 ? 'bi-clock-history' : 'bi-clock';
+                parts.push(`<i class="bi ${delayIcon} me-1"></i>Arrival Delay: ${source.ArrDelayMin} min`);
+            }
+            if (source.DistanceMiles) parts.push(`<i class="bi bi-rulers me-1"></i>Distance: ${source.DistanceMiles} miles`);
+            if (source.Cancelled) parts.push(`<i class="bi bi-x-circle-fill me-1 text-danger"></i>Status: Cancelled`);
             
             snippets = parts.length > 0 ? [parts.join(' | ')] : ['Flight information'];
             
@@ -303,25 +343,70 @@ function displayResults(data) {
             html += `
                 <div class="result-item mb-3 pb-3 border-bottom">
                     <div class="d-flex justify-content-between align-items-start mb-1">
-                        <h6 class="mb-0 fw-bold">${title}</h6>
+                        <h6 class="mb-0 fw-bold">
+                            <i class="bi bi-building text-primary me-2"></i>${title}
+                        </h6>
                         ${indexBadge}
                     </div>
-                    <p class="mb-0 small text-muted">Airline Code: ${url}</p>
+                    <p class="mb-0 small text-muted">
+                        <i class="bi bi-tag-fill me-1"></i>Airline Code: ${url}
+                    </p>
+                </div>
+            `;
+        } else if (indexName === 'flights') {
+            // Special formatting for flights - show route prominently
+            html += `
+                <div class="result-item mb-3 pb-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <h6 class="mb-0 fw-bold">
+                            <i class="bi bi-airplane text-primary me-2"></i>${title}
+                        </h6>
+                        ${indexBadge}
+                    </div>
+                    <p class="mb-1 small">
+                        <i class="bi bi-geo-alt-fill text-primary me-1"></i><strong>Route:</strong> ${url}
+                    </p>
+                    ${snippetHtml ? `<p class="small mb-1">${snippetHtml}</p>` : ''}
+                    ${meta.length > 0 ? `<small class="text-muted">
+                        ${meta.map(m => {
+                            if (m.includes('Flight ID')) return `<i class="bi bi-hash me-1"></i>${m}`;
+                            if (m.includes('Tail Number')) return `<i class="bi bi-tag me-1"></i>${m}`;
+                            if (m.includes('Date')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;
+                            return m;
+                        }).join(' | ')}
+                    </small>` : ''}
                 </div>
             `;
         } else {
             html += `
                 <div class="result-item mb-3 pb-3 border-bottom">
                     <div class="d-flex justify-content-between align-items-start mb-1">
-                        <h6 class="mb-0 fw-bold">${escapeHtml(title)}</h6>
+                        <h6 class="mb-0 fw-bold">
+                            <i class="bi bi-file-earmark-text text-primary me-2"></i>${escapeHtml(title)}
+                        </h6>
                         ${indexBadge}
                     </div>
                     ${snippetHtml ? `<p class="small mb-1">${snippetHtml}</p>` : ''}
-                    ${meta.length > 0 ? `<small class="text-muted">${meta.join(' | ')}</small>` : ''}
+                    ${meta.length > 0 ? `<small class="text-muted">
+                        ${meta.map(m => {
+                            if (m.includes('Uploaded')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;
+                            if (m.includes('Author')) return `<i class="bi bi-person me-1"></i>${m}`;
+                            return m;
+                        }).join(' | ')}
+                    </small>` : ''}
                 </div>
             `;
         }
     });
+    
+    // Add warnings if any indices failed
+    if (data.warnings && data.warnings.length > 0) {
+        html += `
+            <div class="alert alert-warning mt-3" role="alert">
+                <i class="bi bi-exclamation-triangle"></i> <strong>Warning:</strong> ${data.warnings.join('; ')}
+            </div>
+        `;
+    }
     
     // Add stats
     const totalValue = typeof total === 'object' ? total.value : total;
@@ -335,6 +420,190 @@ function displayResults(data) {
     `;
     
     resultsContainer.innerHTML = html;
+    
+    // Display facets if viewing flights and aggregations are available
+    if (currentIndex === 'flights' && data.aggregations) {
+        displayFacets(data.aggregations);
+    } else {
+        hideFacets();
+    }
+}
+
+function displayFacets(aggregations) {
+    if (!aggregations || currentIndex !== 'flights') {
+        hideFacets();
+        return;
+    }
+    
+    let facetsHtml = '<div class="row"><div class="col-12"><h6 class="mb-3"><i class="bi bi-funnel-fill me-2"></i>Filter Results</h6></div></div>';
+    facetsHtml += '<div class="row g-3">';
+    
+    // Cancelled facet
+    if (aggregations.cancelled && aggregations.cancelled.buckets) {
+        facetsHtml += '<div class="col-md-6 col-lg-3">';
+        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
+        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-x-circle me-1"></i>Cancelled</h6>';
+        aggregations.cancelled.buckets.forEach(bucket => {
+            const isCancelled = bucket.key === true || bucket.key === 'true';
+            const isActive = currentFilters.cancelled === isCancelled;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            facetsHtml += `
+                <button class="btn btn-sm ${activeClass} w-100 mb-1 facet-btn" 
+                        data-facet="cancelled" 
+                        data-value="${isCancelled}">
+                    ${isCancelled ? 'Yes' : 'No'} <span class="badge bg-light text-dark">${bucket.doc_count}</span>
+                </button>
+            `;
+        });
+        facetsHtml += '</div></div></div>';
+    }
+    
+    // Diverted facet
+    if (aggregations.diverted && aggregations.diverted.buckets) {
+        facetsHtml += '<div class="col-md-6 col-lg-3">';
+        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
+        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-arrow-repeat me-1"></i>Diverted</h6>';
+        aggregations.diverted.buckets.forEach(bucket => {
+            const isDiverted = bucket.key === true || bucket.key === 'true';
+            const isActive = currentFilters.diverted === isDiverted;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            facetsHtml += `
+                <button class="btn btn-sm ${activeClass} w-100 mb-1 facet-btn" 
+                        data-facet="diverted" 
+                        data-value="${isDiverted}">
+                    ${isDiverted ? 'Yes' : 'No'} <span class="badge bg-light text-dark">${bucket.doc_count}</span>
+                </button>
+            `;
+        });
+        facetsHtml += '</div></div></div>';
+    }
+    
+    // Airlines facet
+    if (aggregations.airlines && aggregations.airlines.buckets && aggregations.airlines.buckets.length > 0) {
+        facetsHtml += '<div class="col-md-6 col-lg-3">';
+        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
+        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-building me-1"></i>Airline</h6>';
+        facetsHtml += '<div style="max-height: 200px; overflow-y: auto;">';
+        aggregations.airlines.buckets.forEach(bucket => {
+            const isActive = currentFilters.airline === bucket.key;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            facetsHtml += `
+                <button class="btn btn-sm ${activeClass} w-100 mb-1 text-start facet-btn" 
+                        data-facet="airline" 
+                        data-value="${escapeHtml(bucket.key)}">
+                    ${escapeHtml(bucket.key)} <span class="badge bg-light text-dark float-end">${bucket.doc_count}</span>
+                </button>
+            `;
+        });
+        facetsHtml += '</div></div></div></div>';
+    }
+    
+    // Origins facet
+    if (aggregations.origins && aggregations.origins.buckets && aggregations.origins.buckets.length > 0) {
+        facetsHtml += '<div class="col-md-6 col-lg-3">';
+        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
+        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-geo-alt me-1"></i>Origin</h6>';
+        facetsHtml += '<div style="max-height: 200px; overflow-y: auto;">';
+        aggregations.origins.buckets.forEach(bucket => {
+            const isActive = currentFilters.origin === bucket.key;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            facetsHtml += `
+                <button class="btn btn-sm ${activeClass} w-100 mb-1 text-start facet-btn" 
+                        data-facet="origin" 
+                        data-value="${escapeHtml(bucket.key)}">
+                    ${escapeHtml(bucket.key)} <span class="badge bg-light text-dark float-end">${bucket.doc_count}</span>
+                </button>
+            `;
+        });
+        facetsHtml += '</div></div></div></div>';
+    }
+    
+    // Destinations facet
+    if (aggregations.destinations && aggregations.destinations.buckets && aggregations.destinations.buckets.length > 0) {
+        facetsHtml += '<div class="col-md-6 col-lg-3">';
+        facetsHtml += '<div class="card h-100"><div class="card-body p-3">';
+        facetsHtml += '<h6 class="card-title small mb-2"><i class="bi bi-geo-alt-fill me-1"></i>Destination</h6>';
+        facetsHtml += '<div style="max-height: 200px; overflow-y: auto;">';
+        aggregations.destinations.buckets.forEach(bucket => {
+            const isActive = currentFilters.dest === bucket.key;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            facetsHtml += `
+                <button class="btn btn-sm ${activeClass} w-100 mb-1 text-start facet-btn" 
+                        data-facet="dest" 
+                        data-value="${escapeHtml(bucket.key)}">
+                    ${escapeHtml(bucket.key)} <span class="badge bg-light text-dark float-end">${bucket.doc_count}</span>
+                </button>
+            `;
+        });
+        facetsHtml += '</div></div></div></div>';
+    }
+    
+    facetsHtml += '</div>';
+    
+    // Show active filters
+    const activeFilters = Object.keys(currentFilters).filter(key => currentFilters[key] !== null && currentFilters[key] !== undefined);
+    if (activeFilters.length > 0) {
+        facetsHtml += '<div class="mt-3"><strong>Active Filters:</strong> ';
+        const filterLabels = [];
+        if (currentFilters.cancelled !== undefined) {
+            filterLabels.push(`Cancelled: ${currentFilters.cancelled ? 'Yes' : 'No'}`);
+        }
+        if (currentFilters.diverted !== undefined) {
+            filterLabels.push(`Diverted: ${currentFilters.diverted ? 'Yes' : 'No'}`);
+        }
+        if (currentFilters.airline) {
+            filterLabels.push(`Airline: ${currentFilters.airline}`);
+        }
+        if (currentFilters.origin) {
+            filterLabels.push(`Origin: ${currentFilters.origin}`);
+        }
+        if (currentFilters.dest) {
+            filterLabels.push(`Destination: ${currentFilters.dest}`);
+        }
+        facetsHtml += filterLabels.join(' | ');
+        facetsHtml += ' <button class="btn btn-sm btn-outline-danger ms-2" onclick="clearFilters()"><i class="bi bi-x-circle"></i> Clear All</button>';
+        facetsHtml += '</div>';
+    }
+    
+    facetsContainer.innerHTML = facetsHtml;
+    facetsContainer.style.display = 'block';
+    
+    // Attach event listeners to facet buttons
+    facetsContainer.querySelectorAll('.facet-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const facetName = this.dataset.facet;
+            let value = this.dataset.value;
+            
+            // Convert string booleans to actual booleans
+            if (value === 'true') value = true;
+            if (value === 'false') value = false;
+            
+            toggleFacet(facetName, value);
+        });
+    });
+}
+
+function hideFacets() {
+    facetsContainer.style.display = 'none';
+    facetsContainer.innerHTML = '';
+}
+
+function toggleFacet(facetName, value) {
+    if (currentFilters[facetName] === value) {
+        // Remove filter if clicking the same value
+        delete currentFilters[facetName];
+    } else {
+        // Set filter
+        currentFilters[facetName] = value;
+    }
+    
+    // Perform search with updated filters
+    performSearch();
+}
+
+function clearFilters() {
+    currentFilters = {};
+    performSearch();
 }
 
 function clearResults() {
