@@ -264,7 +264,159 @@ def search_all_indices(query: str, search_type: str, size: int = 20, filters: Op
 
 
 def search_flights(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
-    """Search flights indices using pattern 'flights-*' (e.g., flights-2019, flights-2020)."""
+    """Search flights indices using ES|QL with LOOKUP JOIN to enrich with airline names."""
+
+    # Build the WHERE clause for filters
+    where_clauses = []
+    if query:
+        # Add query conditions for different fields
+        query_escaped = query.replace('"', '\\"')  # Escape double quotes for ES|QL
+        where_clauses.append(f'(Flight_Number LIKE "*{query_escaped}*" OR Reporting_Airline LIKE "*{query_escaped}*" OR Origin LIKE "*{query_escaped}*" OR Dest LIKE "*{query_escaped}*")')
+
+    if filters:
+        if filters.get('cancelled') is not None:
+            where_clauses.append(f"Cancelled == {str(filters['cancelled']).lower()}")
+        if filters.get('diverted') is not None:
+            where_clauses.append(f"Diverted == {str(filters['diverted']).lower()}")
+        if filters.get('airline'):
+            airline_escaped = filters['airline'].replace('"', '\\"')
+            where_clauses.append(f'Reporting_Airline == "{airline_escaped}"')
+        if filters.get('origin'):
+            origin_escaped = filters['origin'].replace('"', '\\"')
+            where_clauses.append(f'Origin == "{origin_escaped}"')
+        if filters.get('dest'):
+            dest_escaped = filters['dest'].replace('"', '\\"')
+            where_clauses.append(f'Dest == "{dest_escaped}"')
+        if filters.get('flight_date'):
+            # Use date range for filtering - ES|QL datetime literal format with double quotes
+            flight_date = filters['flight_date']
+            # Format: YYYY-MM-DDTHH:MM:SS (no timezone, will match local time in index)
+            where_clauses.append(f'(@timestamp >= "{flight_date}T00:00:00" AND @timestamp < "{flight_date}T23:59:59")')
+
+    where_clause = " AND ".join(where_clauses) if where_clauses else ""
+
+    # Build ES|QL query with LOOKUP JOIN
+    esql_query = f"""
+        FROM flights-*
+        | LOOKUP JOIN airlines ON Reporting_Airline
+        {f'| WHERE {where_clause}' if where_clause else ''}
+        | KEEP FlightID, Reporting_Airline, Airline_Name, Flight_Number, Origin, Dest,
+               CRSDepTimeLocal, CRSArrTimeLocal, DepDelayMin, ArrDelayMin,
+               Cancelled, Diverted, DistanceMiles, @timestamp
+        | LIMIT {size}
+    """
+
+    body = {
+        "query": esql_query.strip()
+    }
+
+    # Log the query for debugging
+    LOGGER.info(f"ES|QL Query: {esql_query.strip()}")
+    LOGGER.info(f"Filters: {filters}")
+
+    try:
+        # Execute ES|QL query
+        esql_result = make_es_request('POST', '/_query', body)
+
+        # Also get aggregations using standard search API
+        aggs_body = {
+            "size": 0,
+            "query": {"match_all": {}},
+            "aggs": {
+                "cancelled": {
+                    "terms": {"field": "Cancelled", "size": 2}
+                },
+                "diverted": {
+                    "terms": {"field": "Diverted", "size": 2}
+                },
+                "airlines": {
+                    "terms": {"field": "Reporting_Airline", "size": 20, "order": {"_count": "desc"}}
+                },
+                "origins": {
+                    "terms": {"field": "Origin", "size": 20, "order": {"_count": "desc"}}
+                },
+                "destinations": {
+                    "terms": {"field": "Dest", "size": 20, "order": {"_count": "desc"}}
+                },
+                "flight_dates": {
+                    "date_histogram": {
+                        "field": "@timestamp",
+                        "calendar_interval": "day",
+                        "format": "yyyy-MM-dd",
+                        "order": {"_key": "desc"}
+                    }
+                }
+            }
+        }
+
+        # Apply filters to aggregation query
+        if filters:
+            filter_clauses = []
+            if filters.get('cancelled') is not None:
+                filter_clauses.append({"term": {"Cancelled": filters['cancelled']}})
+            if filters.get('diverted') is not None:
+                filter_clauses.append({"term": {"Diverted": filters['diverted']}})
+            if filters.get('airline'):
+                filter_clauses.append({"term": {"Reporting_Airline": filters['airline']}})
+            if filters.get('origin'):
+                filter_clauses.append({"term": {"Origin": filters['origin']}})
+            if filters.get('dest'):
+                filter_clauses.append({"term": {"Dest": filters['dest']}})
+            if filters.get('flight_date'):
+                filter_clauses.append({
+                    "range": {
+                        "@timestamp": {
+                            "gte": f"{filters['flight_date']}T00:00:00",
+                            "lt": f"{filters['flight_date']}T23:59:59"
+                        }
+                    }
+                })
+
+            if filter_clauses:
+                aggs_body["query"] = {
+                    "bool": {
+                        "filter": filter_clauses
+                    }
+                }
+
+        aggs_result = make_es_request('POST', '/flights-*/_search', aggs_body)
+
+        # Convert ES|QL result to standard search response format
+        hits = []
+        columns = esql_result.get('columns', [])
+        column_names = [col['name'] for col in columns]
+
+        for row in esql_result.get('values', []):
+            source = {}
+            for i, value in enumerate(row):
+                if i < len(column_names):
+                    source[column_names[i]] = value
+
+            hit = {
+                '_index': 'flights',
+                '_source': source,
+                '_score': 1.0,
+                'highlight': {}
+            }
+            hits.append(hit)
+
+        return {
+            'hits': {
+                'total': {'value': len(hits), 'relation': 'eq'},
+                'hits': hits
+            },
+            'aggregations': aggs_result.get('aggregations', {}),
+            'search_type': search_type
+        }
+
+    except Exception as e:
+        LOGGER.warning(f"ES|QL query failed, falling back to standard search: {e}")
+        # Fallback to original implementation
+        return search_flights_fallback(query, search_type, size, filters)
+
+
+def search_flights_fallback(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
+    """Fallback search for flights using standard Query DSL."""
     if query:
         query_clause = {
             "multi_match": {
@@ -282,7 +434,7 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
         }
     else:
         query_clause = {"match_all": {}}
-    
+
     # Add filters if provided
     if filters:
         filter_clauses = []
@@ -297,7 +449,6 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
         if filters.get('dest'):
             filter_clauses.append({"term": {"Dest": filters['dest']}})
         if filters.get('flight_date'):
-            # Filter by specific date (day range)
             filter_clauses.append({
                 "range": {
                     "@timestamp": {
@@ -314,7 +465,7 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
                     "filter": filter_clauses
                 }
             }
-    
+
     body = {
         "query": query_clause,
         "size": size,
@@ -359,7 +510,7 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
             }
         }
     }
-    
+
     return make_es_request('POST', '/flights-*/_search', body)
 
 

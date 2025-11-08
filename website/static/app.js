@@ -367,6 +367,77 @@ function displayResults(data) {
         } else if (indexName === 'flights') {
             // Special formatting for flights - show route prominently with structured layout
             const source = hit._source;
+            // Use Airline_Name if available (from ES|QL LOOKUP JOIN), otherwise fall back to Reporting_Airline code
+            const airlineDisplay = source.Airline_Name
+                ? `${source.Airline_Name} (${source.Reporting_Airline})`
+                : source.Reporting_Airline;
+
+            // Format times (e.g., "1430" -> "14:30" or "2:30 PM")
+            const formatTime = (timeStr) => {
+                if (!timeStr) return '';
+                const str = String(timeStr).padStart(4, '0');
+                const hours = parseInt(str.substring(0, 2));
+                const minutes = str.substring(2, 4);
+                const period = hours >= 12 ? 'PM' : 'AM';
+                const displayHours = hours === 0 ? 12 : (hours > 12 ? hours - 12 : hours);
+                return `${displayHours}:${minutes} ${period}`;
+            };
+
+            // Calculate actual arrival time by adding delay to scheduled time
+            const calculateActualArrival = (scheduledTime, delayMinutes) => {
+                if (!scheduledTime || delayMinutes === undefined) return null;
+                const str = String(scheduledTime).padStart(4, '0');
+                let hours = parseInt(str.substring(0, 2));
+                let minutes = parseInt(str.substring(2, 4));
+
+                // Add delay
+                minutes += delayMinutes;
+
+                // Handle overflow
+                while (minutes >= 60) {
+                    hours++;
+                    minutes -= 60;
+                }
+                while (minutes < 0) {
+                    hours--;
+                    minutes += 60;
+                }
+                while (hours >= 24) {
+                    hours -= 24;
+                }
+                while (hours < 0) {
+                    hours += 24;
+                }
+
+                const period = hours >= 12 ? 'PM' : 'AM';
+                const displayHours = hours === 0 ? 12 : (hours > 12 ? hours - 12 : hours);
+                const displayMinutes = String(minutes).padStart(2, '0');
+                return `${displayHours}:${displayMinutes} ${period}`;
+            };
+
+            // Format delay in hours and minutes
+            const formatDelay = (delayMinutes) => {
+                const absDelay = Math.abs(delayMinutes);
+                const hours = Math.floor(absDelay / 60);
+                const minutes = absDelay % 60;
+
+                if (hours > 0) {
+                    return `${hours}h ${minutes}m`;
+                } else {
+                    return `${minutes}m`;
+                }
+            };
+
+            // Format flight date with day of week
+            const formatFlightDate = (timestamp) => {
+                if (!timestamp) return '';
+                const date = new Date(timestamp);
+                const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                const dayName = days[date.getDay()];
+                const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                return `${dayName}, ${dateStr}`;
+            };
+
             html += `
                 <div class="result-item result-item-flights">
                     <div class="d-flex justify-content-between align-items-start mb-2">
@@ -375,6 +446,13 @@ function displayResults(data) {
                         </h6>
                         ${indexBadge}
                     </div>
+                    ${source['@timestamp'] ? `<div class="row g-2 mb-2">
+                        <div class="col-12">
+                            <div class="flight-date small text-muted">
+                                <i class="bi bi-calendar-event me-1"></i>${formatFlightDate(source['@timestamp'])}
+                            </div>
+                        </div>
+                    </div>` : ''}
                     <div class="row g-2 mb-2">
                         <div class="col-12">
                             <div class="flight-route">
@@ -382,18 +460,38 @@ function displayResults(data) {
                             </div>
                         </div>
                     </div>
-                    <div class="row g-2 small">
+                    <div class="row g-3 small">
+                        <div class="col-md-6">
+                            <div class="mb-2"><i class="bi bi-airplane-fill me-1" style="transform: rotate(45deg); display: inline-block;"></i><strong>Departure</strong></div>
+                            ${source.CRSDepTimeLocal ? `<div class="mb-1">
+                                Scheduled: ${formatTime(source.CRSDepTimeLocal)}
+                            </div>` : ''}
+                            ${source.CRSDepTimeLocal && source.DepDelayMin !== undefined ? `<div class="mb-1">
+                                Actual: ${calculateActualArrival(source.CRSDepTimeLocal, source.DepDelayMin)}
+                            </div>` : ''}
+                            ${source.DepDelayMin !== undefined ? `<div class="mb-1">
+                                Delay: ${formatDelay(source.DepDelayMin)}${source.DepDelayMin > 0 ? ' <span class="text-danger">(Late)</span>' : ''}${source.DepDelayMin < 0 ? ' <span class="text-success">(Early)</span>' : ''}
+                            </div>` : ''}
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-2"><i class="bi bi-airplane-fill me-1" style="transform: rotate(115deg); display: inline-block;"></i><strong>Arrival</strong></div>
+                            ${source.CRSArrTimeLocal ? `<div class="mb-1">
+                                Scheduled: ${formatTime(source.CRSArrTimeLocal)}
+                            </div>` : ''}
+                            ${source.CRSArrTimeLocal && source.ArrDelayMin !== undefined ? `<div class="mb-1">
+                                Actual: ${calculateActualArrival(source.CRSArrTimeLocal, source.ArrDelayMin)}
+                            </div>` : ''}
+                            ${source.ArrDelayMin !== undefined ? `<div class="mb-1">
+                                Delay: ${formatDelay(source.ArrDelayMin)}${source.ArrDelayMin > 0 ? ' <span class="text-danger">(Late)</span>' : ''}${source.ArrDelayMin < 0 ? ' <span class="text-success">(Early)</span>' : ''}
+                            </div>` : ''}
+                        </div>
+                    </div>
+                    <div class="row g-2 small mt-2">
                         ${source.Reporting_Airline ? `<div class="col-md-6">
-                            <i class="bi bi-airplane-engines me-1"></i><strong>Airline:</strong> ${source.Reporting_Airline}
+                            <i class="bi bi-airplane-engines me-1"></i><strong>Airline:</strong> ${airlineDisplay}
                         </div>` : ''}
                         ${source.DistanceMiles ? `<div class="col-md-6">
-                            <i class="bi bi-signpost-2 me-1"></i><strong>Distance:</strong> ${source.DistanceMiles} miles
-                        </div>` : ''}
-                        ${source.DepDelayMin !== undefined ? `<div class="col-md-6">
-                            <i class="bi ${source.DepDelayMin > 0 ? 'bi-clock-history' : 'bi-clock'} me-1"></i><strong>Dep Delay:</strong> ${source.DepDelayMin} min
-                        </div>` : ''}
-                        ${source.ArrDelayMin !== undefined ? `<div class="col-md-6">
-                            <i class="bi ${source.ArrDelayMin > 0 ? 'bi-clock-history' : 'bi-clock'} me-1"></i><strong>Arr Delay:</strong> ${source.ArrDelayMin} min
+                            <i class="bi bi-signpost-2 me-1"></i><strong>Distance:</strong> ${source.DistanceMiles.toLocaleString()} miles
                         </div>` : ''}
                         ${source.Cancelled ? `<div class="col-12">
                             <i class="bi bi-x-circle-fill me-1 text-danger"></i><strong class="text-danger">Status: Cancelled</strong>
@@ -448,10 +546,11 @@ function displayResults(data) {
     // Add stats
     const totalValue = typeof total === 'object' ? total.value : total;
     const indicesInfo = data.searched_indices ? ` (${data.searched_indices.join(', ')})` : '';
+    const resultText = totalValue === 1 ? 'Result' : 'Results';
     html += `
         <div class="text-center mt-4 pt-3 border-top">
             <p class="text-muted mb-0 small">
-                <i class="bi bi-bar-chart"></i> About ${totalValue.toLocaleString()} results${indicesInfo}
+                <i class="bi bi-bar-chart"></i> ${totalValue.toLocaleString()} ${resultText}${indicesInfo}
             </p>
         </div>
     `;
