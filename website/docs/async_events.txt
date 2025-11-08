@@ -1,0 +1,111 @@
+# Event Types
+
+## Straight from the source
+
+export enum ChatEventType {
+  toolCall = 'tool_call',
+  browserToolCall = 'browser_tool_call',
+  toolProgress = 'tool_progress',
+  toolResult = 'tool_result',
+  reasoning = 'reasoning',
+  messageChunk = 'message_chunk',
+  messageComplete = 'message_complete',
+  thinkingComplete = 'thinking_complete',
+  roundComplete = 'round_complete',
+  conversationCreated = 'conversation_created',
+  conversationUpdated = 'conversation_updated',
+  conversationIdSet = 'conversation_id_set',
+}
+
+## reasoning
+
+Purpose: Handles reasoning-related data.
+schema:
+{
+  "reasoning": "plain text reasoning content",
+  "transient": false
+}
+
+## tool_call
+
+Purpose: Triggered when a tool is invoked.
+schema:
+{
+  "tool_call_id": "uuid",
+  "tool_id": "tool_name",
+  "params": {}
+}
+
+## tool_progress
+
+Purpose: Reports progress of a running tool.
+schema:
+{
+  "tool_call_id": "uuid",
+  "message": "progress message"
+}
+
+## tool_result
+
+Purpose: Returns results from a completed tool call.
+schema:
+{
+  "tool_call_id": "uuid",
+  "tool_id": "tool_name",
+  "results": []
+}
+
+Note: results is an array of ToolResult objects.
+
+## message_chunk
+
+Purpose: Streams partial text chunks.
+schema:
+{
+  "message_id": "uuid",
+  "text_chunk": "partial text"
+}
+
+## message_complete
+
+Purpose: Indicates message stream is finished.
+schema:
+{
+  "message_id": "uuid",
+  "message_content": "full text content of the message"
+}
+
+## conversation_created
+
+Purpose: Fired when a new conversation gets persisted and we have id.
+schema:
+{
+  "conversation_id": "uuid",
+  "title": "conversation title"
+}
+
+## conversation_updated
+
+Purpose: Fired when a conversation is updated.
+schema:
+{
+  "conversation_id": "uuid",
+  "title": "updated conversation title"
+}
+
+## conversation_id_set
+
+Purpose: Sets the conversation ID.
+schema:
+{
+  "conversation_id": "uuid"
+}
+
+## round_complete
+
+Purpose: Marks end of one conversation round.
+schema:
+{
+  "round": # full round json object
+}
+

@@ -278,6 +278,7 @@ async function performStreamingSearch(query) {
 async function displayAIResults(response, query) {
     resultsContainer.innerHTML = `
         <div class="ai-stream-wrapper" id="ai-stream-container">
+            <div class="ai-conversation-title" id="ai-conversation-title" style="display: none; padding: 12px; margin-bottom: 16px; background: var(--color-bg-secondary); border-radius: 8px; font-weight: 600; color: var(--bs-body-color);"></div>
             <div class="ai-message ai-message-user">
                 <div class="ai-message-header">
                     <span class="ai-avatar">You</span>
@@ -306,6 +307,7 @@ async function displayAIResults(response, query) {
     const typingIndicatorEl = document.getElementById('ai-typing-indicator');
     const toolEventsEl = document.getElementById('ai-tool-events');
     const statusBadgeEl = document.getElementById('ai-status-badge');
+    const conversationTitleEl = document.getElementById('ai-conversation-title');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -315,6 +317,7 @@ async function displayAIResults(response, query) {
         typingIndicatorEl,
         toolEventsEl,
         statusBadgeEl,
+        conversationTitleEl,
         assistantBuffer: '',
         lastStreamText: '',
         hasFinalMessage: false,
@@ -351,12 +354,44 @@ async function displayAIResults(response, query) {
 function renderAIStream(data, context) {
     console.debug('AI stream event:', data);
     const kind = data.kind || data.event || data.type || 'unknown';
+    const eventData = data.data || data;
     const {
         assistantTextEl,
         typingIndicatorEl,
         toolEventsEl,
-        statusBadgeEl
+        statusBadgeEl,
+        conversationTitleEl
     } = context;
+
+    const appendInfoEvent = (title, bodyText) => {
+        const text = bodyText != null
+            ? (typeof bodyText === 'string' ? bodyText : JSON.stringify(bodyText, null, 2))
+            : '';
+
+        const eventEl = document.createElement('div');
+        eventEl.className = 'ai-tool-event ai-info-event';
+        eventEl.style.backgroundColor = 'var(--color-bg-secondary)';
+        eventEl.style.borderLeft = '3px solid #6c757d';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'ai-tool-event-title';
+        titleEl.style.color = '#6c757d';
+        titleEl.textContent = title;
+
+        const bodyEl = document.createElement('div');
+        bodyEl.style.padding = '8px';
+        bodyEl.style.whiteSpace = 'pre-wrap';
+        bodyEl.textContent = text;
+
+        eventEl.appendChild(titleEl);
+        if (text) {
+            eventEl.appendChild(bodyEl);
+        }
+        toolEventsEl.appendChild(eventEl);
+        toolEventsEl.classList.add('is-visible');
+
+        return eventEl;
+    };
 
     const appendToolEvent = (title, bodyText) => {
         const text = bodyText != null
@@ -434,30 +469,44 @@ function renderAIStream(data, context) {
     const chunkText = chunkPayload ? extractTextFromPayload(chunkPayload) : '';
     const hasChunkText = Boolean(chunkText && chunkText.trim());
 
-    if (['tool_code', 'tool_start'].includes(kind)) {
-        appendToolEvent(data.tool_name ? `Running ${data.tool_name}` : 'Tool Code', data.code || chunkText);
+    // Handle events from async_events.txt documentation
+    if (kind === 'conversation_id_set') {
+        // Silently store conversation ID, don't display
+        context.conversationId = eventData.conversation_id;
+    } else if (kind === 'reasoning') {
+        // Display AI's reasoning/thinking
+        const reasoning = eventData.reasoning || '';
+        if (reasoning) {
+            appendInfoEvent('💭 Reasoning', reasoning);
+            statusBadgeEl.textContent = 'Thinking…';
+            statusBadgeEl.classList.remove('is-error');
+        }
+    } else if (kind === 'tool_call') {
+        // Display tool call with parameters
+        const toolId = eventData.tool_id || 'unknown';
+        const params = eventData.params || {};
+        const paramsText = Object.keys(params).length > 0
+            ? JSON.stringify(params, null, 2)
+            : '(no parameters)';
+        appendToolEvent(`🔧 Calling Tool: ${toolId}`, paramsText);
         statusBadgeEl.textContent = 'Calling tool…';
-        statusBadgeEl.classList.remove('is-complete', 'is-error');
-    } else if (['tool_output', 'tool_result', 'tool_end'].includes(kind)) {
-        const output = data.output || data.result || chunkText;
-        appendToolEvent(data.tool_name ? `${data.tool_name} Output` : 'Tool Output', output);
-        statusBadgeEl.textContent = 'Tool complete';
         statusBadgeEl.classList.remove('is-error');
     } else if (kind === 'tool_progress') {
+        // Display tool progress messages
         const progressMessages = [];
 
-        if (typeof data.message === 'string') {
-            progressMessages.push(data.message);
+        if (typeof eventData.message === 'string') {
+            progressMessages.push(eventData.message);
         }
 
-        if (Array.isArray(data.data)) {
-            data.data.forEach(item => {
+        if (Array.isArray(eventData.data)) {
+            eventData.data.forEach(item => {
                 if (item && typeof item.message === 'string') {
                     progressMessages.push(item.message);
                 }
             });
-        } else if (data.data && typeof data.data === 'object' && typeof data.data.message === 'string') {
-            progressMessages.push(data.data.message);
+        } else if (eventData.data && typeof eventData.data === 'object' && typeof eventData.data.message === 'string') {
+            progressMessages.push(eventData.data.message);
         }
 
         if (hasChunkText) {
@@ -477,13 +526,84 @@ function renderAIStream(data, context) {
                 context.lastToolEvent.container.classList.add('has-progress');
                 toolEventsEl.classList.add('is-visible');
             } else {
-                appendToolEvent('Tool Progress', progressText);
+                appendInfoEvent('⏳ Progress', progressText);
             }
 
             statusBadgeEl.textContent = 'In progress…';
             statusBadgeEl.classList.remove('is-error');
         }
-    } else if (['tool_call', 'agent_action'].includes(kind)) {
+    } else if (kind === 'tool_result') {
+        // Display tool results
+        const toolId = eventData.tool_id || 'unknown';
+        const results = eventData.results || [];
+        const resultsText = Array.isArray(results)
+            ? `Received ${results.length} result(s)`
+            : JSON.stringify(results, null, 2);
+        appendInfoEvent(`✅ Tool Result: ${toolId}`, resultsText);
+        statusBadgeEl.textContent = 'Tool complete';
+        statusBadgeEl.classList.remove('is-error');
+    } else if (kind === 'message_chunk') {
+        // Special handling: concatenate text chunks for teletype effect
+        const textChunk = eventData.text_chunk || '';
+        if (textChunk) {
+            // Simply append the chunk to the buffer
+            context.assistantBuffer = (context.assistantBuffer || '') + textChunk;
+            assistantTextEl.textContent = context.assistantBuffer;
+            assistantTextEl.classList.add('is-visible');
+            typingIndicatorEl.classList.add('is-active');
+            if (!statusBadgeEl.classList.contains('is-complete')) {
+                statusBadgeEl.textContent = 'Responding…';
+                statusBadgeEl.classList.remove('is-error');
+            }
+        }
+    } else if (kind === 'message_complete') {
+        // Message is complete
+        const messageContent = eventData.message_content || '';
+        if (messageContent && messageContent !== context.assistantBuffer) {
+            // Use the complete message if different from what we've built
+            context.assistantBuffer = messageContent;
+            assistantTextEl.textContent = context.assistantBuffer;
+        }
+        typingIndicatorEl.classList.remove('is-active');
+        statusBadgeEl.textContent = 'Response complete';
+        statusBadgeEl.classList.remove('is-error');
+    } else if (kind === 'thinking_complete') {
+        // Thinking phase is complete
+        appendInfoEvent('✓ Thinking Complete', '');
+        statusBadgeEl.textContent = 'Ready to respond';
+        statusBadgeEl.classList.remove('is-error');
+    } else if (kind === 'round_complete') {
+        // Round is complete
+        typingIndicatorEl.classList.remove('is-active');
+        statusBadgeEl.textContent = 'Done';
+        statusBadgeEl.classList.add('is-complete');
+        context.hasFinalMessage = true;
+    } else if (kind === 'conversation_created') {
+        // Conversation was created - display title at top
+        const title = eventData.title || 'Untitled';
+        if (conversationTitleEl) {
+            conversationTitleEl.textContent = title;
+            conversationTitleEl.style.display = 'block';
+        }
+        appendInfoEvent('💬 Conversation Created', `"${title}"`);
+    } else if (kind === 'conversation_updated') {
+        // Conversation was updated
+        const title = eventData.title || 'Untitled';
+        if (conversationTitleEl) {
+            conversationTitleEl.textContent = title;
+            conversationTitleEl.style.display = 'block';
+        }
+        appendInfoEvent('💬 Conversation Updated', `"${title}"`);
+    } else if (['tool_code', 'tool_start'].includes(kind)) {
+        appendToolEvent(data.tool_name ? `Running ${data.tool_name}` : 'Tool Code', data.code || chunkText);
+        statusBadgeEl.textContent = 'Calling tool…';
+        statusBadgeEl.classList.remove('is-complete', 'is-error');
+    } else if (['tool_output', 'tool_end'].includes(kind)) {
+        const output = data.output || data.result || chunkText;
+        appendToolEvent(data.tool_name ? `${data.tool_name} Output` : 'Tool Output', output);
+        statusBadgeEl.textContent = 'Tool complete';
+        statusBadgeEl.classList.remove('is-error');
+    } else if (['agent_action'].includes(kind)) {
         const payload = data.payload || data.parameters || data.args || data;
         const displayPayload = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
         const title = data.tool_name || data.name || 'Tool Call';
@@ -507,7 +627,8 @@ function renderAIStream(data, context) {
         statusBadgeEl.classList.add('is-complete');
         context.hasFinalMessage = true;
     } else if (kind === 'error') {
-        appendToolEvent('Error', data.message || chunkText || 'Unknown error');
+        const errorMsg = eventData.message || data.message || chunkText || 'Unknown error';
+        appendInfoEvent('❌ Error', errorMsg);
         typingIndicatorEl.classList.remove('is-active');
         statusBadgeEl.textContent = 'Error';
         statusBadgeEl.classList.add('is-error');
@@ -518,12 +639,11 @@ function renderAIStream(data, context) {
         statusBadgeEl.classList.add('is-complete');
         context.hasFinalMessage = true;
     } else if (hasChunkText) {
+        // Fallback: try to display as text
         applyAssistantText(chunkText);
-    } else if (kind === 'unknown' && data.raw) {
-        const rawText = typeof data.raw === 'string' ? data.raw : JSON.stringify(data.raw, null, 2);
-        appendToolEvent('Event', rawText);
     } else {
-        appendToolEvent(kind || 'Event', JSON.stringify(data, null, 2));
+        // Unknown event - display in a minimal way
+        console.warn('Unknown event type:', kind, data);
     }
 
     setTimeout(() => {
