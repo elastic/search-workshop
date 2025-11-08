@@ -143,8 +143,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Search as you type with debouncing
+    // Search as you type with debouncing (disabled for AI mode)
     searchInput.addEventListener('input', () => {
+        // Disable search-as-you-type for AI mode
+        if (currentSearchMode === 'ai') {
+            return;
+        }
+        
         // Clear any existing timeout
         if (searchTimeout) {
             clearTimeout(searchTimeout);
@@ -211,7 +216,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Update URL and re-search if appropriate
             updateURL();
-            if (currentQuery || currentSearchMode === 'keyword' || currentSearchMode === 'semantic') {
+            // Don't auto-submit when switching to AI mode, but clear results and filters
+            if (currentSearchMode === 'ai') {
+                clearResults();
+                hideFacets();
+            } else if (currentQuery || currentSearchMode === 'keyword' || currentSearchMode === 'semantic') {
                 performSearch();
             }
         });
