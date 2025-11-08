@@ -21,6 +21,65 @@ const themeToggle = document.getElementById('themeToggle');
 const themeIcon = document.getElementById('themeIcon');
 const logo = document.getElementById('logo');
 
+const TEXT_EXTRACTION_KEYS = [
+    'chunk',
+    'delta',
+    'text',
+    'message',
+    'content',
+    'response',
+    'output',
+    'output_text',
+    'result',
+    'value',
+    'body'
+];
+
+function extractTextFromPayload(payload) {
+    const segments = [];
+    const visited = new WeakSet();
+
+    const collect = (value, depth = 0) => {
+        if (value == null || depth > 6) return;
+
+        if (typeof value === 'string') {
+            if (value.trim()) {
+                segments.push(value);
+            }
+            return;
+        }
+
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            segments.push(String(value));
+            return;
+        }
+
+        if (Array.isArray(value)) {
+            value.forEach(item => collect(item, depth + 1));
+            return;
+        }
+
+        if (typeof value === 'object') {
+            if (visited.has(value)) return;
+            visited.add(value);
+
+            if ('markdown' in value) {
+                collect(value.markdown, depth + 1);
+            }
+
+            TEXT_EXTRACTION_KEYS.forEach(key => {
+                if (key in value) {
+                    collect(value[key], depth + 1);
+                }
+            });
+        }
+    };
+
+    collect(payload, 0);
+
+    return segments.join('').replace(/\r/g, '');
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize theme
@@ -208,7 +267,7 @@ async function performStreamingSearch(query) {
             throw new Error(error.error || `HTTP error! status: ${response.status}`);
         }
 
-        await displayAIResults(response);
+        await displayAIResults(response, query);
     } catch (error) {
         showError(error.message);
     } finally {
@@ -216,12 +275,51 @@ async function performStreamingSearch(query) {
     }
 }
 
-async function displayAIResults(response) {
-    resultsContainer.innerHTML = '<div id="ai-stream-container"></div>';
+async function displayAIResults(response, query) {
+    resultsContainer.innerHTML = `
+        <div class="ai-stream-wrapper" id="ai-stream-container">
+            <div class="ai-message ai-message-user">
+                <div class="ai-message-header">
+                    <span class="ai-avatar">You</span>
+                    <span class="ai-timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div class="ai-message-content">${escapeHtml(query || '(empty query)')}</div>
+            </div>
+            <div class="ai-message ai-message-assistant">
+                <div class="ai-message-header">
+                    <span class="ai-avatar">Flight AI</span>
+                    <span class="ai-status-badge" id="ai-status-badge">Thinking…</span>
+                </div>
+                <div class="ai-message-content">
+                    <div class="ai-assistant-text" id="ai-assistant-text"></div>
+                    <div class="typing-indicator is-active" id="ai-typing-indicator">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <div class="ai-tool-events" id="ai-tool-events"></div>
+                </div>
+            </div>
+        </div>
+    `;
+
     const streamContainer = document.getElementById('ai-stream-container');
+    const assistantTextEl = document.getElementById('ai-assistant-text');
+    const typingIndicatorEl = document.getElementById('ai-typing-indicator');
+    const toolEventsEl = document.getElementById('ai-tool-events');
+    const statusBadgeEl = document.getElementById('ai-status-badge');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    const context = {
+        streamContainer,
+        assistantTextEl,
+        typingIndicatorEl,
+        toolEventsEl,
+        statusBadgeEl,
+        assistantBuffer: '',
+        lastStreamText: '',
+        hasFinalMessage: false,
+        lastToolEvent: null,
+    };
 
     while (true) {
         const { done, value } = await reader.read();
@@ -237,90 +335,200 @@ async function displayAIResults(response) {
             try {
                 const jsonText = trimmed.startsWith('data:') ? trimmed.replace(/^data:\s*/, '') : trimmed;
                 const data = JSON.parse(jsonText);
-                renderAIStream(data, streamContainer);
+                renderAIStream(data, context);
             } catch (e) {
                 console.error('Error parsing stream data:', e, 'line:', line);
-                renderAIStream({ kind: 'unknown', raw: trimmed }, streamContainer);
+                renderAIStream({ kind: 'unknown', raw: trimmed }, context);
             }
         }
     }
+
+    context.typingIndicatorEl.classList.remove('is-active');
+    context.statusBadgeEl.textContent = context.hasFinalMessage ? 'Done' : 'Completed';
+    context.statusBadgeEl.classList.add('is-complete');
 }
 
-function renderAIStream(data, container) {
+function renderAIStream(data, context) {
+    console.debug('AI stream event:', data);
     const kind = data.kind || data.event || data.type || 'unknown';
+    const {
+        assistantTextEl,
+        typingIndicatorEl,
+        toolEventsEl,
+        statusBadgeEl
+    } = context;
 
-    if (kind === 'tool_code') {
-        const toolCodeHtml = `
-            <div class="ai-tool-code">
-                <h6>Tool Code</h6>
-                <pre><code>${escapeHtml(data.code)}</code></pre>
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', toolCodeHtml);
-    } else if (kind === 'tool_output' || kind === 'tool_result') {
-        const output = data.output || data.result || data.text || '';
-        const toolOutputHtml = `
-            <div class="ai-tool-output">
-                <h6>Tool Output</h6>
-                <pre><code>${escapeHtml(output)}</code></pre>
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', toolOutputHtml);
-    } else if (kind === 'tool_call' || kind === 'agent_action') {
-        const payload = data.payload || {};
-        const displayPayload = typeof payload === 'string'
-            ? payload
-            : JSON.stringify(payload, null, 2);
-        const toolCallHtml = `
-            <div class="ai-tool-code">
-                <h6>Tool Call</h6>
-                <pre><code>${escapeHtml(displayPayload)}</code></pre>
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', toolCallHtml);
-    } else if (kind === 'llm_response_chunk' || kind === 'response_chunk' || kind === 'message') {
-        const chunk = data.chunk || data.delta || data.text || data.message || '';
-        let llmContainer = container.querySelector('.llm-response');
-        if (!llmContainer) {
-            llmContainer = document.createElement('div');
-            llmContainer.className = 'llm-response';
-            llmContainer.innerHTML = '<h6>LLM Response</h6><div class="content"></div>';
-            container.appendChild(llmContainer);
+    const appendToolEvent = (title, bodyText) => {
+        const text = bodyText != null
+            ? (typeof bodyText === 'string' ? bodyText : JSON.stringify(bodyText, null, 2))
+            : '';
+
+        const eventEl = document.createElement('div');
+        eventEl.className = 'ai-tool-event';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'ai-tool-event-title';
+        titleEl.textContent = title;
+
+        const preEl = document.createElement('pre');
+        const codeEl = document.createElement('code');
+        codeEl.textContent = text;
+        preEl.appendChild(codeEl);
+
+        eventEl.appendChild(titleEl);
+        eventEl.appendChild(preEl);
+        toolEventsEl.appendChild(eventEl);
+        toolEventsEl.classList.add('is-visible');
+
+        context.lastToolEvent = {
+            container: eventEl,
+            codeEl
+        };
+
+        return context.lastToolEvent;
+    };
+
+    const applyAssistantText = (incomingText, { replace = false } = {}) => {
+        if (!incomingText) return;
+        const text = incomingText.replace(/\r/g, '');
+        if (!text.trim()) return;
+
+        if (replace) {
+            context.assistantBuffer = text;
+            context.lastStreamText = text;
+        } else {
+            if (text === context.lastStreamText) {
+                return;
+            }
+
+            if (context.assistantBuffer && text.startsWith(context.assistantBuffer)) {
+                const remainder = text.slice(context.assistantBuffer.length);
+                if (remainder) {
+                    context.assistantBuffer += remainder;
+                }
+            } else if (context.lastStreamText && text.startsWith(context.lastStreamText)) {
+                const remainder = text.slice(context.lastStreamText.length);
+                if (remainder) {
+                    context.assistantBuffer += remainder;
+                }
+            } else if (!context.assistantBuffer) {
+                context.assistantBuffer = text;
+            } else {
+                const needsSpace = !context.assistantBuffer.endsWith(' ') && !text.startsWith(' ');
+                context.assistantBuffer += needsSpace ? ` ${text}` : text;
+            }
+
+            context.lastStreamText = text;
         }
-        llmContainer.querySelector('.content').innerText += chunk;
-    } else if (kind === 'final_response' || kind === 'response') {
-        const responseText = data.response || data.output || data.text || '';
-        const finalHtml = `
-            <div class="ai-final-response">
-                <h6>Final Response</h6>
-                <p>${escapeHtml(responseText)}</p>
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', finalHtml);
+
+        assistantTextEl.textContent = context.assistantBuffer;
+        assistantTextEl.classList.add('is-visible');
+        typingIndicatorEl.classList.add('is-active');
+        if (!statusBadgeEl.classList.contains('is-complete')) {
+            statusBadgeEl.textContent = 'Responding…';
+            statusBadgeEl.classList.remove('is-error');
+        }
+    };
+
+    const chunkPayload = data.chunk ?? data.delta ?? data.message ?? data.response ?? data.output ?? null;
+    const chunkText = chunkPayload ? extractTextFromPayload(chunkPayload) : '';
+    const hasChunkText = Boolean(chunkText && chunkText.trim());
+
+    if (['tool_code', 'tool_start'].includes(kind)) {
+        appendToolEvent(data.tool_name ? `Running ${data.tool_name}` : 'Tool Code', data.code || chunkText);
+        statusBadgeEl.textContent = 'Calling tool…';
+        statusBadgeEl.classList.remove('is-complete', 'is-error');
+    } else if (['tool_output', 'tool_result', 'tool_end'].includes(kind)) {
+        const output = data.output || data.result || chunkText;
+        appendToolEvent(data.tool_name ? `${data.tool_name} Output` : 'Tool Output', output);
+        statusBadgeEl.textContent = 'Tool complete';
+        statusBadgeEl.classList.remove('is-error');
+    } else if (kind === 'tool_progress') {
+        const progressMessages = [];
+
+        if (typeof data.message === 'string') {
+            progressMessages.push(data.message);
+        }
+
+        if (Array.isArray(data.data)) {
+            data.data.forEach(item => {
+                if (item && typeof item.message === 'string') {
+                    progressMessages.push(item.message);
+                }
+            });
+        } else if (data.data && typeof data.data === 'object' && typeof data.data.message === 'string') {
+            progressMessages.push(data.data.message);
+        }
+
+        if (hasChunkText) {
+            progressMessages.push(chunkText);
+        }
+
+        const progressText = progressMessages
+            .map(msg => msg.trim())
+            .filter(Boolean)
+            .join('\n');
+
+        if (progressText) {
+            if (context.lastToolEvent && context.lastToolEvent.codeEl) {
+                const codeEl = context.lastToolEvent.codeEl;
+                const existing = codeEl.textContent || '';
+                codeEl.textContent = existing ? `${existing}\n${progressText}` : progressText;
+                context.lastToolEvent.container.classList.add('has-progress');
+                toolEventsEl.classList.add('is-visible');
+            } else {
+                appendToolEvent('Tool Progress', progressText);
+            }
+
+            statusBadgeEl.textContent = 'In progress…';
+            statusBadgeEl.classList.remove('is-error');
+        }
+    } else if (['tool_call', 'agent_action'].includes(kind)) {
+        const payload = data.payload || data.parameters || data.args || data;
+        const displayPayload = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+        const title = data.tool_name || data.name || 'Tool Call';
+        appendToolEvent(title, displayPayload);
+        statusBadgeEl.textContent = 'Calling tool…';
+        statusBadgeEl.classList.remove('is-error');
+    } else if (['status'].includes(kind) && hasChunkText) {
+        statusBadgeEl.textContent = chunkText;
+        statusBadgeEl.classList.remove('is-error');
+    } else if (['llm_response_chunk', 'response_chunk', 'message', 'assistant_message', 'text_delta', 'content_delta'].includes(kind)) {
+        if (hasChunkText) {
+            applyAssistantText(chunkText);
+        }
+    } else if (['final_response', 'response', 'assistant_response', 'message_completed', 'completion'].includes(kind)) {
+        const responseText = chunkText || extractTextFromPayload(data);
+        if (responseText) {
+            applyAssistantText(responseText, { replace: true });
+        }
+        typingIndicatorEl.classList.remove('is-active');
+        statusBadgeEl.textContent = 'Responded';
+        statusBadgeEl.classList.add('is-complete');
+        context.hasFinalMessage = true;
     } else if (kind === 'error') {
-        const errorHtml = `
-            <div class="alert alert-danger">
-                <strong>Error:</strong> ${escapeHtml(data.message)}
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', errorHtml);
+        appendToolEvent('Error', data.message || chunkText || 'Unknown error');
+        typingIndicatorEl.classList.remove('is-active');
+        statusBadgeEl.textContent = 'Error';
+        statusBadgeEl.classList.add('is-error');
+        context.hasFinalMessage = true;
+    } else if (kind === 'done') {
+        typingIndicatorEl.classList.remove('is-active');
+        statusBadgeEl.textContent = 'Done';
+        statusBadgeEl.classList.add('is-complete');
+        context.hasFinalMessage = true;
+    } else if (hasChunkText) {
+        applyAssistantText(chunkText);
     } else if (kind === 'unknown' && data.raw) {
-        const genericHtml = `
-            <div class="ai-generic-event">
-                <h6>Event</h6>
-                <pre><code>${escapeHtml(typeof data.raw === 'string' ? data.raw : JSON.stringify(data.raw, null, 2))}</code></pre>
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', genericHtml);
+        const rawText = typeof data.raw === 'string' ? data.raw : JSON.stringify(data.raw, null, 2);
+        appendToolEvent('Event', rawText);
     } else {
-        const genericHtml = `
-            <div class="ai-generic-event">
-                <h6>${escapeHtml(kind)}</h6>
-                <pre><code>${escapeHtml(JSON.stringify(data, null, 2))}</code></pre>
-            </div>
-        `;
-        container.insertAdjacentHTML('beforeend', genericHtml);
+        appendToolEvent(kind || 'Event', JSON.stringify(data, null, 2));
     }
+
+    setTimeout(() => {
+        context.streamContainer.scrollTop = context.streamContainer.scrollHeight;
+    }, 0);
 }
 
 function displayResults(data) {
