@@ -80,6 +80,45 @@ function extractTextFromPayload(payload) {
     return segments.join('').replace(/\r/g, '');
 }
 
+function normalizeAssistantText(text) {
+    if (typeof text !== 'string') {
+        return '';
+    }
+
+    let normalized = text.replace(/\r/g, '');
+
+    // Convert repeated <br> tags into single newline characters
+    normalized = normalized.replace(/(<br\s*\/?>\s*)+/gi, '\n');
+
+    // Collapse runs of blank lines (with optional whitespace) down to a single newline
+    normalized = normalized.replace(/(\n\s*){2,}/g, '\n');
+
+    return normalized;
+}
+
+function renderAssistantMarkdown(targetEl, text) {
+    const normalized = normalizeAssistantText(text);
+
+    if (!targetEl) {
+        return normalized;
+    }
+
+    if (typeof marked !== 'undefined') {
+        const rendered = marked.parse(normalized);
+        const compacted = rendered.replace(/(?:<br\s*\/?>\s*){2,}/gi, '<br>');
+        targetEl.innerHTML = compacted;
+    } else {
+        targetEl.textContent = normalized;
+    }
+
+    if (normalized) {
+        targetEl.classList.add('is-visible');
+    } else {
+        targetEl.classList.remove('is-visible');
+    }
+    return normalized;
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize theme
@@ -557,13 +596,13 @@ function renderAIStream(data, context) {
             }
         }
     } else if (kind === 'message_complete') {
-        // Message is complete
+        // Message is complete - render as markdown
         const messageContent = eventData.message_content || '';
         if (messageContent && messageContent !== context.assistantBuffer) {
             // Use the complete message if different from what we've built
             context.assistantBuffer = messageContent;
-            assistantTextEl.textContent = context.assistantBuffer;
         }
+        context.assistantBuffer = renderAssistantMarkdown(assistantTextEl, context.assistantBuffer || '');
         typingIndicatorEl.classList.remove('is-active');
         statusBadgeEl.textContent = 'Response complete';
         statusBadgeEl.classList.remove('is-error');
@@ -573,7 +612,10 @@ function renderAIStream(data, context) {
         statusBadgeEl.textContent = 'Ready to respond';
         statusBadgeEl.classList.remove('is-error');
     } else if (kind === 'round_complete') {
-        // Round is complete
+        // Round is complete - ensure final message is rendered compactly
+        if (context.assistantBuffer) {
+            context.assistantBuffer = renderAssistantMarkdown(assistantTextEl, context.assistantBuffer);
+        }
         typingIndicatorEl.classList.remove('is-active');
         statusBadgeEl.textContent = 'Done';
         statusBadgeEl.classList.add('is-complete');
@@ -619,8 +661,9 @@ function renderAIStream(data, context) {
         }
     } else if (['final_response', 'response', 'assistant_response', 'message_completed', 'completion'].includes(kind)) {
         const responseText = chunkText || extractTextFromPayload(data);
-        if (responseText) {
-            applyAssistantText(responseText, { replace: true });
+        const finalText = responseText || context.assistantBuffer;
+        if (finalText) {
+            context.assistantBuffer = renderAssistantMarkdown(assistantTextEl, finalText);
         }
         typingIndicatorEl.classList.remove('is-active');
         statusBadgeEl.textContent = 'Responded';
