@@ -293,6 +293,9 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
             # Format: YYYY-MM-DDTHH:MM:SS (no timezone, will match local time in index)
             where_clauses.append(f'(@timestamp >= "{flight_date}T00:00:00" AND @timestamp < "{flight_date}T23:59:59")')
 
+    # Always filter out flights with null Flight_Number
+    where_clauses.append("Flight_Number IS NOT NULL")
+
     where_clause = " AND ".join(where_clauses) if where_clauses else ""
 
     # Build ES|QL query with LOOKUP JOIN
@@ -317,6 +320,57 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
     try:
         # Execute ES|QL query
         esql_result = make_es_request('POST', '/_query', body)
+
+        # Build a count query that matches the same WHERE clause
+        count_body = {
+            "query": {"match_all": {}}
+        }
+
+        # Apply the same filters to the count query
+        filter_clauses = []
+
+        # Always filter out null Flight_Number
+        filter_clauses.append({"exists": {"field": "Flight_Number"}})
+
+        if query:
+            filter_clauses.append({
+                "multi_match": {
+                    "query": query,
+                    "fields": ["Flight_Number", "Reporting_Airline", "Origin", "Dest"]
+                }
+            })
+
+        if filters:
+            if filters.get('cancelled') is not None:
+                filter_clauses.append({"term": {"Cancelled": filters['cancelled']}})
+            if filters.get('diverted') is not None:
+                filter_clauses.append({"term": {"Diverted": filters['diverted']}})
+            if filters.get('airline'):
+                filter_clauses.append({"term": {"Reporting_Airline": filters['airline']}})
+            if filters.get('origin'):
+                filter_clauses.append({"term": {"Origin": filters['origin']}})
+            if filters.get('dest'):
+                filter_clauses.append({"term": {"Dest": filters['dest']}})
+            if filters.get('flight_date'):
+                filter_clauses.append({
+                    "range": {
+                        "@timestamp": {
+                            "gte": f"{filters['flight_date']}T00:00:00",
+                            "lt": f"{filters['flight_date']}T23:59:59"
+                        }
+                    }
+                })
+
+        if filter_clauses:
+            count_body["query"] = {
+                "bool": {
+                    "filter": filter_clauses
+                }
+            }
+
+        # Get total count
+        count_result = make_es_request('POST', '/flights-*/_count', count_body)
+        total_count = count_result.get('count', 0)
 
         # Also get aggregations using standard search API
         aggs_body = {
@@ -402,7 +456,7 @@ def search_flights(query: str, search_type: str, size: int = 20, filters: Option
 
         return {
             'hits': {
-                'total': {'value': len(hits), 'relation': 'eq'},
+                'total': {'value': total_count, 'relation': 'eq'},
                 'hits': hits
             },
             'aggregations': aggs_result.get('aggregations', {}),
@@ -565,7 +619,23 @@ def search_airlines(query: str, search_type: str, size: int = 20, filters: Optio
         }
     }
 
-    return make_es_request('POST', '/airlines/_search', body)
+    # Get the search results
+    search_result = make_es_request('POST', '/airlines/_search', body)
+
+    # Get accurate count using _count API
+    count_body = {
+        "query": query_clause
+    }
+    count_result = make_es_request('POST', '/airlines/_count', count_body)
+    total_count = count_result.get('count', 0)
+
+    # Log the count for debugging
+    LOGGER.info(f"Airlines count: {total_count}")
+
+    # Update the total in the search result
+    search_result['hits']['total'] = {'value': total_count, 'relation': 'eq'}
+
+    return search_result
 
 
 def search_contracts(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:

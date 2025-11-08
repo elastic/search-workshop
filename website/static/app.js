@@ -241,7 +241,8 @@ function displayResults(data) {
             if (!highlight['Origin']?.[0]) origin = source.Origin || 'N/A';
             if (!highlight['Dest']?.[0]) dest = source.Dest || 'N/A';
 
-            title = `Flight #${airline}${flightNum}`;
+            // Create airline display for title (will be enhanced in rendering)
+            title = `${airline}${flightNum}`;
             url = `${origin} → ${dest}`;
             
             // Build snippet from flight details with icons
@@ -420,95 +421,81 @@ function displayResults(data) {
                 const absDelay = Math.abs(delayMinutes);
                 const hours = Math.floor(absDelay / 60);
                 const minutes = absDelay % 60;
+                const sign = delayMinutes < 0 ? '-' : '';
 
                 if (hours > 0) {
-                    return `${hours}h ${minutes}m`;
+                    return `${sign}${hours}h ${minutes}m`;
                 } else {
-                    return `${minutes}m`;
+                    return `${sign}${minutes}m`;
                 }
             };
 
-            // Format flight date with day of week
+            // Format flight date with day of week in UTC
             const formatFlightDate = (timestamp) => {
                 if (!timestamp) return '';
                 const date = new Date(timestamp);
                 const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                const dayName = days[date.getDay()];
-                const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const dayName = days[date.getUTCDay()];
+                const dateStr = date.toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    timeZone: 'UTC'
+                });
                 return `${dayName}, ${dateStr}`;
             };
 
             html += `
                 <div class="result-item result-item-flights">
                     <div class="d-flex justify-content-between align-items-start mb-2">
-                        <h6 class="fw-bold mb-0">
-                            <i class="bi bi-airplane me-2"></i>${title}
-                        </h6>
+                        <div class="flex-grow-1">
+                            <h6 class="fw-bold mb-1">
+                                <i class="bi bi-airplane me-2"></i>${airlineDisplay} Flight #${source.Flight_Number || 'N/A'}
+                            </h6>
+                            ${source['@timestamp'] ? `<div class="small text-muted">
+                                <i class="bi bi-calendar-event me-1"></i>${formatFlightDate(source['@timestamp'])}
+                            </div>` : ''}
+                        </div>
                         ${indexBadge}
                     </div>
-                    ${source['@timestamp'] ? `<div class="row g-2 mb-2">
-                        <div class="col-12">
-                            <div class="flight-date small text-muted">
-                                <i class="bi bi-calendar-event me-1"></i>${formatFlightDate(source['@timestamp'])}
+
+                    <div class="flight-route-display p-2" style="background-color: var(--color-bg-secondary); border-radius: 6px;">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <div class="text-center flex-shrink-0" style="min-width: 80px;">
+                                <div class="fw-bold" style="font-size: 1.1em;">${source.Origin || ''}</div>
+                                ${source.CRSDepTimeLocal ? `<div class="fw-bold" style="font-size: 0.95em;">${formatTime(source.CRSDepTimeLocal)}</div>` : ''}
+                                ${source.CRSDepTimeLocal && source.DepDelayMin !== undefined ? `<div class="small"><span class="text-muted">Actual:</span> <span class="fw-bold">${calculateActualArrival(source.CRSDepTimeLocal, source.DepDelayMin)}</span></div>` : ''}
+                                ${source.DepDelayMin !== undefined && source.DepDelayMin !== 0 ? `<div class="small ${source.DepDelayMin > 0 ? 'text-danger' : 'text-success'}">${formatDelay(source.DepDelayMin)} <span style="color: #999;">(${source.DepDelayMin > 0 ? 'Late' : 'Early'})</span></div>` : ''}
+                            </div>
+                            <div class="flex-grow-1 text-center mx-3">
+                                <div class="d-flex align-items-center justify-content-center">
+                                    <div style="flex: 1; height: 2px; background: var(--color-border);"></div>
+                                    <i class="bi bi-airplane-fill mx-2" style="transform: rotate(90deg);"></i>
+                                    <div style="flex: 1; height: 2px; background: var(--color-border);"></div>
+                                </div>
+                                ${source.DistanceMiles ? `<div class="small text-muted mt-1">${source.DistanceMiles.toLocaleString()} mi</div>` : ''}
+                            </div>
+                            <div class="text-center flex-shrink-0" style="min-width: 80px;">
+                                <div class="fw-bold" style="font-size: 1.1em;">${source.Dest || ''}</div>
+                                ${source.CRSArrTimeLocal ? `<div class="fw-bold" style="font-size: 0.95em;">${formatTime(source.CRSArrTimeLocal)}</div>` : ''}
+                                ${source.CRSArrTimeLocal && source.ArrDelayMin !== undefined ? `<div class="small"><span class="text-muted">Actual:</span> <span class="fw-bold">${calculateActualArrival(source.CRSArrTimeLocal, source.ArrDelayMin)}</span></div>` : ''}
+                                ${source.ArrDelayMin !== undefined && source.ArrDelayMin !== 0 ? `<div class="small ${source.ArrDelayMin > 0 ? 'text-danger' : 'text-success'}">${formatDelay(source.ArrDelayMin)} <span style="color: #999;">(${source.ArrDelayMin > 0 ? 'Late' : 'Early'})</span></div>` : ''}
                             </div>
                         </div>
+                    </div>
+
+                    ${source.Cancelled || source.Diverted ? `<div class="d-flex flex-wrap gap-2 small mt-2">
+                        ${source.Cancelled ? `<div class="flex-fill">
+                            <i class="bi bi-x-circle-fill me-1 text-danger"></i><strong class="text-danger">Cancelled</strong>
+                        </div>` : ''}
+                        ${source.Diverted ? `<div class="flex-fill">
+                            <i class="bi bi-arrow-repeat me-1 text-warning"></i><strong class="text-warning">Diverted</strong>
+                        </div>` : ''}
                     </div>` : ''}
-                    <div class="row g-2 mb-2">
-                        <div class="col-12">
-                            <div class="flight-route">
-                                <i class="bi bi-geo-alt-fill me-1"></i><strong>Route:</strong> ${url}
-                            </div>
+                    ${source.FlightID ? `<div class="mt-2 pt-2" style="border-top: 1px solid var(--color-border);">
+                        <div class="text-start" style="font-size: 0.75em; color: #aaa;">
+                            ${source.FlightID}
                         </div>
-                    </div>
-                    <div class="row g-3 small">
-                        <div class="col-md-6">
-                            <div class="mb-2"><i class="bi bi-airplane-fill me-1" style="transform: rotate(45deg); display: inline-block;"></i><strong>Departure</strong></div>
-                            ${source.CRSDepTimeLocal ? `<div class="mb-1">
-                                Scheduled: ${formatTime(source.CRSDepTimeLocal)}
-                            </div>` : ''}
-                            ${source.CRSDepTimeLocal && source.DepDelayMin !== undefined ? `<div class="mb-1">
-                                Actual: ${calculateActualArrival(source.CRSDepTimeLocal, source.DepDelayMin)}
-                            </div>` : ''}
-                            ${source.DepDelayMin !== undefined ? `<div class="mb-1">
-                                Delay: ${formatDelay(source.DepDelayMin)}${source.DepDelayMin > 0 ? ' <span class="text-danger">(Late)</span>' : ''}${source.DepDelayMin < 0 ? ' <span class="text-success">(Early)</span>' : ''}
-                            </div>` : ''}
-                        </div>
-                        <div class="col-md-6">
-                            <div class="mb-2"><i class="bi bi-airplane-fill me-1" style="transform: rotate(115deg); display: inline-block;"></i><strong>Arrival</strong></div>
-                            ${source.CRSArrTimeLocal ? `<div class="mb-1">
-                                Scheduled: ${formatTime(source.CRSArrTimeLocal)}
-                            </div>` : ''}
-                            ${source.CRSArrTimeLocal && source.ArrDelayMin !== undefined ? `<div class="mb-1">
-                                Actual: ${calculateActualArrival(source.CRSArrTimeLocal, source.ArrDelayMin)}
-                            </div>` : ''}
-                            ${source.ArrDelayMin !== undefined ? `<div class="mb-1">
-                                Delay: ${formatDelay(source.ArrDelayMin)}${source.ArrDelayMin > 0 ? ' <span class="text-danger">(Late)</span>' : ''}${source.ArrDelayMin < 0 ? ' <span class="text-success">(Early)</span>' : ''}
-                            </div>` : ''}
-                        </div>
-                    </div>
-                    <div class="row g-2 small mt-2">
-                        ${source.Reporting_Airline ? `<div class="col-md-6">
-                            <i class="bi bi-airplane-engines me-1"></i><strong>Airline:</strong> ${airlineDisplay}
-                        </div>` : ''}
-                        ${source.DistanceMiles ? `<div class="col-md-6">
-                            <i class="bi bi-signpost-2 me-1"></i><strong>Distance:</strong> ${source.DistanceMiles.toLocaleString()} miles
-                        </div>` : ''}
-                        ${source.Cancelled ? `<div class="col-12">
-                            <i class="bi bi-x-circle-fill me-1 text-danger"></i><strong class="text-danger">Status: Cancelled</strong>
-                        </div>` : ''}
-                        ${source.Diverted ? `<div class="col-12">
-                            <i class="bi bi-arrow-repeat me-1 text-warning"></i><strong class="text-warning">Status: Diverted</strong>
-                        </div>` : ''}
-                    </div>
-                    ${meta.length > 0 ? `<div class="mt-2 pt-2" style="border-top: 1px solid var(--color-border);">
-                        <small class="text-muted">
-                            ${meta.map(m => {
-                                if (m.includes('Flight ID')) return `<i class="bi bi-hash me-1"></i>${m}`;
-                                if (m.includes('Tail Number')) return `<i class="bi bi-tag me-1"></i>${m}`;
-                                if (m.includes('Date')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;
-                                return m;
-                            }).join(' | ')}
-                        </small>
                     </div>` : ''}
                 </div>
             `;
