@@ -90,11 +90,16 @@ body {
 
 /* Result highlight styling */
 .result-highlight {
-    background: var(--color-highlight);
+    background: #fef08a;
     padding: 2px 4px;
     font-weight: 600;
     border-radius: 3px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+[data-bs-theme="dark"] .result-highlight {
+    background: #854d0e;
+    color: #fef08a;
 }
 
 /* Result item styling */

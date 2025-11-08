@@ -240,8 +240,8 @@ function displayResults(data) {
             if (!highlight['Reporting_Airline']?.[0]) airline = source.Reporting_Airline || 'N/A';
             if (!highlight['Origin']?.[0]) origin = source.Origin || 'N/A';
             if (!highlight['Dest']?.[0]) dest = source.Dest || 'N/A';
-            
-            title = `Flight ${flightNum}`;
+
+            title = `Flight #${airline}${flightNum}`;
             url = `${origin} → ${dest}`;
             
             // Build snippet from flight details with icons
@@ -255,7 +255,7 @@ function displayResults(data) {
                 const delayIcon = source.ArrDelayMin > 0 ? 'bi-clock-history' : 'bi-clock';
                 parts.push(`<i class="bi ${delayIcon} me-1"></i>Arrival Delay: ${source.ArrDelayMin} min`);
             }
-            if (source.DistanceMiles) parts.push(`<i class="bi bi-rulers me-1"></i>Distance: ${source.DistanceMiles} miles`);
+            if (source.DistanceMiles) parts.push(`<i class="bi bi-signpost-2 me-1"></i>Distance: ${source.DistanceMiles} miles`);
             if (source.Cancelled) parts.push(`<i class="bi bi-x-circle-fill me-1 text-danger"></i>Status: Cancelled`);
             
             snippets = parts.length > 0 ? [parts.join(' | ')] : ['Flight information'];
@@ -365,27 +365,53 @@ function displayResults(data) {
                 </div>
             `;
         } else if (indexName === 'flights') {
-            // Special formatting for flights - show route prominently
+            // Special formatting for flights - show route prominently with structured layout
+            const source = hit._source;
             html += `
                 <div class="result-item result-item-flights">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <h6 class="fw-bold">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h6 class="fw-bold mb-0">
                             <i class="bi bi-airplane me-2"></i>${title}
                         </h6>
                         ${indexBadge}
                     </div>
-                    <p class="small">
-                        <i class="bi bi-geo-alt-fill me-1"></i><strong>Route:</strong> ${url}
-                    </p>
-                    ${snippetHtml ? `<p class="small">${snippetHtml}</p>` : ''}
-                    ${meta.length > 0 ? `<small class="text-muted d-block">
-                        ${meta.map(m => {
-                            if (m.includes('Flight ID')) return `<i class="bi bi-hash me-1"></i>${m}`;
-                            if (m.includes('Tail Number')) return `<i class="bi bi-tag me-1"></i>${m}`;
-                            if (m.includes('Date')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;
-                            return m;
-                        }).join(' | ')}
-                    </small>` : ''}
+                    <div class="row g-2 mb-2">
+                        <div class="col-12">
+                            <div class="flight-route">
+                                <i class="bi bi-geo-alt-fill me-1"></i><strong>Route:</strong> ${url}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-2 small">
+                        ${source.Reporting_Airline ? `<div class="col-md-6">
+                            <i class="bi bi-airplane-engines me-1"></i><strong>Airline:</strong> ${source.Reporting_Airline}
+                        </div>` : ''}
+                        ${source.DistanceMiles ? `<div class="col-md-6">
+                            <i class="bi bi-signpost-2 me-1"></i><strong>Distance:</strong> ${source.DistanceMiles} miles
+                        </div>` : ''}
+                        ${source.DepDelayMin !== undefined ? `<div class="col-md-6">
+                            <i class="bi ${source.DepDelayMin > 0 ? 'bi-clock-history' : 'bi-clock'} me-1"></i><strong>Dep Delay:</strong> ${source.DepDelayMin} min
+                        </div>` : ''}
+                        ${source.ArrDelayMin !== undefined ? `<div class="col-md-6">
+                            <i class="bi ${source.ArrDelayMin > 0 ? 'bi-clock-history' : 'bi-clock'} me-1"></i><strong>Arr Delay:</strong> ${source.ArrDelayMin} min
+                        </div>` : ''}
+                        ${source.Cancelled ? `<div class="col-12">
+                            <i class="bi bi-x-circle-fill me-1 text-danger"></i><strong class="text-danger">Status: Cancelled</strong>
+                        </div>` : ''}
+                        ${source.Diverted ? `<div class="col-12">
+                            <i class="bi bi-arrow-repeat me-1 text-warning"></i><strong class="text-warning">Status: Diverted</strong>
+                        </div>` : ''}
+                    </div>
+                    ${meta.length > 0 ? `<div class="mt-2 pt-2" style="border-top: 1px solid var(--color-border);">
+                        <small class="text-muted">
+                            ${meta.map(m => {
+                                if (m.includes('Flight ID')) return `<i class="bi bi-hash me-1"></i>${m}`;
+                                if (m.includes('Tail Number')) return `<i class="bi bi-tag me-1"></i>${m}`;
+                                if (m.includes('Date')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;
+                                return m;
+                            }).join(' | ')}
+                        </small>
+                    </div>` : ''}
                 </div>
             `;
         } else {
@@ -513,7 +539,7 @@ function displayFacets(aggregations) {
         facetsHtml += `
             <button class="btn btn-sm ${activeClass} facet-btn index-switch-btn"
                     data-index="${escapeHtml(index.key)}">
-                <strong>${index.label}</strong>${countDisplay}
+                ${index.label}${countDisplay}
             </button>
         `;
     });
@@ -536,7 +562,7 @@ function displayFacets(aggregations) {
                 <button class="btn btn-sm ${activeClass} facet-btn"
                         data-facet="cancelled"
                         data-value="${isCancelled}">
-                    <strong>${label}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    ${label} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
@@ -557,7 +583,7 @@ function displayFacets(aggregations) {
                 <button class="btn btn-sm ${activeClass} facet-btn"
                         data-facet="diverted"
                         data-value="${isDiverted}">
-                    <strong>${label}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    ${label} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
@@ -576,7 +602,7 @@ function displayFacets(aggregations) {
                 <button class="btn btn-sm ${activeClass} facet-btn"
                         data-facet="airline"
                         data-value="${escapeHtml(bucket.key)}">
-                    <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    ${escapeHtml(bucket.key)} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
@@ -595,7 +621,7 @@ function displayFacets(aggregations) {
                 <button class="btn btn-sm ${activeClass} facet-btn"
                         data-facet="origin"
                         data-value="${escapeHtml(bucket.key)}">
-                    <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    ${escapeHtml(bucket.key)} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
@@ -614,7 +640,7 @@ function displayFacets(aggregations) {
                 <button class="btn btn-sm ${activeClass} facet-btn"
                         data-facet="dest"
                         data-value="${escapeHtml(bucket.key)}">
-                    <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                    ${escapeHtml(bucket.key)} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                 </button>
             `;
         });
@@ -634,7 +660,7 @@ function displayFacets(aggregations) {
                     <button class="btn btn-sm ${activeClass} facet-btn"
                             data-facet="flight_date"
                             data-value="${escapeHtml(bucket.key_as_string)}">
-                        <strong>${escapeHtml(bucket.key_as_string)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                        ${escapeHtml(bucket.key_as_string)} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                     </button>
                 `;
             }
@@ -657,7 +683,7 @@ function displayFacets(aggregations) {
                     <button class="btn btn-sm ${activeClass} facet-btn"
                             data-facet="airline_code"
                             data-value="${escapeHtml(bucket.key)}">
-                        <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                        ${escapeHtml(bucket.key)} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                     </button>
                 `;
             });
@@ -679,7 +705,7 @@ function displayFacets(aggregations) {
                     <button class="btn btn-sm ${activeClass} facet-btn"
                             data-facet="author"
                             data-value="${escapeHtml(bucket.key)}">
-                        <strong>${escapeHtml(bucket.key)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                        ${escapeHtml(bucket.key)} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                     </button>
                 `;
             });
@@ -697,7 +723,7 @@ function displayFacets(aggregations) {
                     <button class="btn btn-sm ${activeClass} facet-btn"
                             data-facet="upload_year"
                             data-value="${escapeHtml(bucket.key_as_string)}">
-                        <strong>${escapeHtml(bucket.key_as_string)}</strong> <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
+                        ${escapeHtml(bucket.key_as_string)} <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>
                     </button>
                 `;
             });
