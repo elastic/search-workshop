@@ -45,6 +45,10 @@ body {
 }
 
 /* Search input styling - blue border to attract attention */
+.input-group {
+    position: relative;
+}
+
 #searchInput {
     border-color: var(--color-primary) !important;
     border-width: 2px;
@@ -377,6 +381,29 @@ body,
 
 .spinner-border {
     color: var(--color-primary) !important;
+}
+
+#loadingIndicator.search-loading-indicator {
+    display: none;
+    position: absolute;
+    right: 60px; /* Position to the left of the search button */
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: none !important;
+    border-radius: 0;
+    background: transparent;
+    padding: 0 0.75rem;
+    pointer-events: none;
+    height: auto;
+}
+
+#loadingIndicator.search-loading-indicator .spinner-border {
+    width: 1.25rem;
+    height: 1.25rem;
 }
 
 /* Sidebar Layout */

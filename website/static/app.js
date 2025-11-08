@@ -111,9 +111,9 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('btn-primary');
             currentSearchMode = btn.dataset.mode;
 
-            // Update URL and re-search if there's a current query
+            // Update URL and re-search if appropriate
             updateURL();
-            if (currentQuery) {
+            if (currentQuery || currentSearchMode === 'bm25' || currentSearchMode === 'semantic') {
                 performSearch();
             }
         });
@@ -813,11 +813,15 @@ function clearResults() {
 }
 
 function showLoading() {
-    loadingIndicator.style.display = 'block';
+    if (!loadingIndicator) return;
+    loadingIndicator.style.display = 'flex';
+    loadingIndicator.setAttribute('aria-hidden', 'false');
 }
 
 function hideLoading() {
+    if (!loadingIndicator) return;
     loadingIndicator.style.display = 'none';
+    loadingIndicator.setAttribute('aria-hidden', 'true');
 }
 
 function showError(message) {
@@ -880,6 +884,9 @@ function resetSearch() {
 
     // Focus back on search input
     searchInput.focus();
+
+    // Reload default results so the page isn't empty
+    performSearch();
 }
 
 function updateURL() {
