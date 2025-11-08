@@ -13,8 +13,9 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+import requests
 import yaml
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request, stream_with_context
 from flask_cors import CORS
 
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -127,6 +128,95 @@ def make_es_request(method: str, path: str, body: Optional[Dict] = None) -> Dict
         raise
 
 
+def make_kibana_request(method: str, path: str, body: Optional[Dict] = None, stream: bool = False):
+    """Make a request to Kibana."""
+    config = load_config()
+
+    raw_endpoint = str(config.get('kibana_endpoint', '')).strip()
+    kibana_config = config.get('kibana')
+    if not raw_endpoint and isinstance(kibana_config, dict):
+        raw_endpoint = str(kibana_config.get('endpoint', '')).strip()
+
+    if not raw_endpoint:
+        es_endpoint = str(config.get('endpoint', '')).strip()
+        if es_endpoint:
+            if '://' not in es_endpoint:
+                es_endpoint = f"http://{es_endpoint}"
+            parsed_es = urllib_parse.urlparse(es_endpoint)
+            hostname = parsed_es.hostname or 'localhost'
+            scheme = parsed_es.scheme or 'http'
+            if hostname in ('localhost', '127.0.0.1'):
+                raw_endpoint = f"{scheme}://{hostname}:5601"
+            else:
+                raise ValueError(
+                    "Kibana endpoint not configured. Set 'kibana_endpoint' under config/elasticsearch.yml "
+                    "or config/elasticsearch.sample.yml."
+                )
+        else:
+            raw_endpoint = 'http://localhost:5601'
+
+    if '://' not in raw_endpoint:
+        raw_endpoint = f"http://{raw_endpoint}"
+
+    parsed = urllib_parse.urlparse(raw_endpoint)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(f"Invalid Kibana endpoint: {raw_endpoint}")
+
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    base_path = parsed.path.rstrip('/') if parsed.path else ''
+    full_path = f"{base_path}/{path.lstrip('/')}"
+    url = f"{base_url}{full_path}"
+    
+    # Build headers
+    headers = {
+        'Content-Type': 'application/json',
+        'kbn-xsrf': 'true',
+    }
+
+    if isinstance(kibana_config, dict) and isinstance(kibana_config.get('headers'), dict):
+        headers.update({str(k): str(v) for k, v in kibana_config['headers'].items()})
+    
+    # Add auth header
+    auth_header = build_auth_header(config)
+    if auth_header:
+        headers['Authorization'] = auth_header
+
+    # Build request
+    data = json.dumps(body).encode('utf-8') if body else None
+    
+    LOGGER.info(f"Kibana request: {method} {url}")
+    LOGGER.info(f"Kibana request headers: {headers}")
+    LOGGER.info(f"Kibana request body: {data}")
+
+    verify_setting = config.get('kibana_ssl_verify', config.get('ssl_verify', True))
+    if isinstance(verify_setting, str):
+        lowered = verify_setting.lower()
+        if lowered in ('false', '0', 'no', 'n'):
+            verify_setting = False
+        elif lowered in ('true', '1', 'yes', 'y'):
+            verify_setting = True
+
+    try:
+        response = requests.request(
+            method,
+            url,
+            data=data,
+            headers=headers,
+            stream=stream,
+            verify=verify_setting
+        )
+        response.raise_for_status()
+        return response
+    except requests.exceptions.HTTPError as e:
+        LOGGER.error(f"Kibana request error: {e}")
+        if e.response is not None:
+            LOGGER.error(f"Kibana response: {e.response.text}")
+        raise
+    except requests.exceptions.RequestException as e:
+        LOGGER.error(f"Kibana request error: {e}")
+        raise
+
+
 @app.route('/')
 def index():
     """Serve the main page."""
@@ -138,6 +228,11 @@ def search():
     """Search endpoint that routes to appropriate search type."""
     data = request.get_json() or {}
     search_type = data.get('type', 'keyword')
+    
+    if search_type == 'ai':
+        # AI search is now streaming
+        return jsonify({'error': "AI search has moved to a streaming endpoint. Please use /api/search/stream."}), 400
+
     query = data.get('query', '').strip()
     index_name = data.get('index', 'all')  # 'all', 'flights', 'airlines', or 'contracts'
     filters = data.get('filters', {})  # Extract filters from request
@@ -180,6 +275,26 @@ def search():
         LOGGER.error(f"Search error: {e}", exc_info=True)
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
 
+
+@app.route('/api/search/stream', methods=['POST'])
+def search_stream():
+    """Streaming search endpoint for AI agent."""
+    data = request.get_json() or {}
+    query = data.get('query', '').strip()
+    filters = data.get('filters', {})
+
+    def generate():
+        try:
+            # Use a generator to stream the response from the AI agent
+            for chunk in ai_agent_search(query, filters=filters, stream=True):
+                yield chunk
+        except Exception as e:
+            LOGGER.error(f"Streaming search error: {e}", exc_info=True)
+            # Yield a JSON error message
+            error_message = json.dumps({'error': f'Streaming search failed: {str(e)}'})
+            yield error_message
+
+    return Response(stream_with_context(generate()), mimetype='application/x-ndjson')
 
 def search_all_indices(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Search across all indices (flights, airlines, contracts) and combine results."""
@@ -851,42 +966,120 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
     return make_es_request('POST', '/contracts/_search', body)
 
 
-def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
-    """Perform AI Agent Builder search with tool calling.
+def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None, stream: bool = False):
+    """Perform AI Agent Builder search with tool calling."""
+    if not query:
+        return {} if not stream else iter([])
 
-    This uses a hybrid approach combining semantic and Keyword search,
-    and can optionally use Elasticsearch inference API for enhanced results.
-    """
-    if query:
-        # Hybrid search combining semantic and keyword search with RRF (Reciprocal Rank Fusion)
-        query_clause = {
-            "bool": {
-                "should": [
-                    {
-                        "semantic": {
-                            "semantic_content": {
-                                "query": query
-                            }
-                        }
-                    },
-                    {
-                        "multi_match": {
-                            "query": query,
-                            "fields": [
-                                "attachment.content^2",
-                                "attachment.title^1.5",
-                                "attachment.description",
-                                "filename"
-                            ],
-                            "type": "best_fields",
-                            "fuzziness": "AUTO"
+    if stream:
+        body = {
+            "input": query,
+            "agent_id": "flight-ai"
+        }
+        response = make_kibana_request('POST', '/api/agent_builder/converse/async', body=body, stream=True)
+
+        def event_stream():
+            event_type: Optional[str] = None
+            data_lines = []
+
+            for raw_line in response.iter_lines(decode_unicode=True):
+                if raw_line is None:
+                    continue
+
+                stripped = raw_line.rstrip('\r\n')
+                LOGGER.debug("AI agent stream line: %s", stripped)
+
+                if stripped == '':
+                    if not data_lines:
+                        event_type = None
+                        continue
+
+                    data_str = '\n'.join(data_lines)
+                    data_lines = []
+
+                    try:
+                        payload = json.loads(data_str) if data_str else {}
+                    except json.JSONDecodeError:
+                        payload = {"raw": data_str}
+
+                    if 'kind' not in payload:
+                        if event_type:
+                            payload['kind'] = event_type
+                        elif 'type' in payload:
+                            payload['kind'] = payload['type']
+
+                    if event_type:
+                        payload.setdefault('event', event_type)
+
+                    serialized = (json.dumps(payload) + '\n').encode('utf-8')
+                    yield serialized
+                    event_type = None
+                    continue
+
+                if stripped.startswith(':'):
+                    # Comment / heartbeat line
+                    continue
+
+                if stripped.startswith('event:'):
+                    event_type = stripped[len('event:'):].strip() or None
+                    continue
+
+                if stripped.startswith('data:'):
+                    data_lines.append(stripped[len('data:'):].lstrip())
+                    continue
+
+                # Fallback: treat as a data line
+                data_lines.append(stripped)
+
+            # Flush any remaining buffered data (in case stream ends without blank line)
+            if data_lines:
+                data_str = '\n'.join(data_lines)
+                try:
+                    payload = json.loads(data_str) if data_str else {}
+                except json.JSONDecodeError:
+                    payload = {"raw": data_str}
+
+                if 'kind' not in payload:
+                    if event_type:
+                        payload['kind'] = event_type
+                    elif 'type' in payload:
+                        payload['kind'] = payload['type']
+
+                if event_type:
+                    payload.setdefault('event', event_type)
+
+                yield (json.dumps(payload) + '\n').encode('utf-8')
+
+        return event_stream()
+
+    # This part of the function will now only be called for non-streaming requests
+    # Hybrid search combining semantic and keyword search with RRF (Reciprocal Rank Fusion)
+    query_clause = {
+        "bool": {
+            "should": [
+                {
+                    "semantic": {
+                        "semantic_content": {
+                            "query": query
                         }
                     }
-                ]
-            }
+                },
+                {
+                    "multi_match": {
+                        "query": query,
+                        "fields": [
+                            "attachment.content^2",
+                            "attachment.title^1.5",
+                            "attachment.description",
+                            "filename"
+                        ],
+                        "type": "best_fields",
+                        "fuzziness": "AUTO"
+                    }
+                }
+            ]
         }
-    else:
-        query_clause = {"match_all": {}}
+    }
 
     # Add filters if provided
     if filters:
@@ -905,20 +1098,12 @@ def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
 
         if filter_clauses:
             # Wrap the existing query in a bool query with filters
-            if query:
-                query_clause = {
-                    "bool": {
-                        "must": [query_clause],
-                        "filter": filter_clauses
-                    }
+            query_clause = {
+                "bool": {
+                    "must": [query_clause],
+                    "filter": filter_clauses
                 }
-            else:
-                query_clause = {
-                    "bool": {
-                        "must": [{"match_all": {}}],
-                        "filter": filter_clauses
-                    }
-                }
+            }
 
     body = {
         "query": query_clause,

@@ -13,3 +13,6 @@ headers: {}
 
 # Set to false to skip SSL verification (not recommended in production).
 ssl_verify: false
+
+# Optional Kibana endpoint (required when not running Kibana locally on port 5601).
+#kibana_endpoint: "https://xxx.gcp.cloud.es.io:9243"

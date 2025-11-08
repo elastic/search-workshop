@@ -147,32 +147,32 @@ document.addEventListener('DOMContentLoaded', () => {
 async function performSearch() {
     const query = searchInput.value.trim();
     
-    // Allow empty queries to load documents when index is selected
     currentQuery = query;
     hideError();
     showLoading();
     clearResults();
     
-    // Update URL with search parameters
     updateURL();
     
+    if (currentSearchMode === 'ai') {
+        await performStreamingSearch(query);
+    } else {
+        await performRegularSearch(query);
+    }
+}
+
+async function performRegularSearch(query) {
     try {
         const requestBody = {
             query: query,
             type: currentSearchMode,
-            index: currentIndex
+            index: currentIndex,
+            filters: Object.keys(currentFilters).length > 0 ? currentFilters : {}
         };
-
-        // Add filters if any are set
-        if (Object.keys(currentFilters).length > 0) {
-            requestBody.filters = currentFilters;
-        }
         
         const response = await fetch('/api/search', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody)
         });
         
@@ -187,6 +187,139 @@ async function performSearch() {
         showError(error.message);
     } finally {
         hideLoading();
+    }
+}
+
+async function performStreamingSearch(query) {
+    try {
+        const requestBody = {
+            query: query,
+            filters: Object.keys(currentFilters).length > 0 ? currentFilters : {}
+        };
+
+        const response = await fetch('/api/search/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || `HTTP error! status: ${response.status}`);
+        }
+
+        await displayAIResults(response);
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        hideLoading();
+    }
+}
+
+async function displayAIResults(response) {
+    resultsContainer.innerHTML = '<div id="ai-stream-container"></div>';
+    const streamContainer = document.getElementById('ai-stream-container');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed === '') continue;
+            try {
+                const jsonText = trimmed.startsWith('data:') ? trimmed.replace(/^data:\s*/, '') : trimmed;
+                const data = JSON.parse(jsonText);
+                renderAIStream(data, streamContainer);
+            } catch (e) {
+                console.error('Error parsing stream data:', e, 'line:', line);
+                renderAIStream({ kind: 'unknown', raw: trimmed }, streamContainer);
+            }
+        }
+    }
+}
+
+function renderAIStream(data, container) {
+    const kind = data.kind || data.event || data.type || 'unknown';
+
+    if (kind === 'tool_code') {
+        const toolCodeHtml = `
+            <div class="ai-tool-code">
+                <h6>Tool Code</h6>
+                <pre><code>${escapeHtml(data.code)}</code></pre>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', toolCodeHtml);
+    } else if (kind === 'tool_output' || kind === 'tool_result') {
+        const output = data.output || data.result || data.text || '';
+        const toolOutputHtml = `
+            <div class="ai-tool-output">
+                <h6>Tool Output</h6>
+                <pre><code>${escapeHtml(output)}</code></pre>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', toolOutputHtml);
+    } else if (kind === 'tool_call' || kind === 'agent_action') {
+        const payload = data.payload || {};
+        const displayPayload = typeof payload === 'string'
+            ? payload
+            : JSON.stringify(payload, null, 2);
+        const toolCallHtml = `
+            <div class="ai-tool-code">
+                <h6>Tool Call</h6>
+                <pre><code>${escapeHtml(displayPayload)}</code></pre>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', toolCallHtml);
+    } else if (kind === 'llm_response_chunk' || kind === 'response_chunk' || kind === 'message') {
+        const chunk = data.chunk || data.delta || data.text || data.message || '';
+        let llmContainer = container.querySelector('.llm-response');
+        if (!llmContainer) {
+            llmContainer = document.createElement('div');
+            llmContainer.className = 'llm-response';
+            llmContainer.innerHTML = '<h6>LLM Response</h6><div class="content"></div>';
+            container.appendChild(llmContainer);
+        }
+        llmContainer.querySelector('.content').innerText += chunk;
+    } else if (kind === 'final_response' || kind === 'response') {
+        const responseText = data.response || data.output || data.text || '';
+        const finalHtml = `
+            <div class="ai-final-response">
+                <h6>Final Response</h6>
+                <p>${escapeHtml(responseText)}</p>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', finalHtml);
+    } else if (kind === 'error') {
+        const errorHtml = `
+            <div class="alert alert-danger">
+                <strong>Error:</strong> ${escapeHtml(data.message)}
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', errorHtml);
+    } else if (kind === 'unknown' && data.raw) {
+        const genericHtml = `
+            <div class="ai-generic-event">
+                <h6>Event</h6>
+                <pre><code>${escapeHtml(typeof data.raw === 'string' ? data.raw : JSON.stringify(data.raw, null, 2))}</code></pre>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', genericHtml);
+    } else {
+        const genericHtml = `
+            <div class="ai-generic-event">
+                <h6>${escapeHtml(kind)}</h6>
+                <pre><code>${escapeHtml(JSON.stringify(data, null, 2))}</code></pre>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', genericHtml);
     }
 }
 
