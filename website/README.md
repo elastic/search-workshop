@@ -1,10 +1,10 @@
 # Flight Search Web App
 
-A simple, Google-like web interface for searching flights using Elasticsearch with support for BM25, Semantic Search, and AI Agent Builder.
+A simple, Google-like web interface for searching flights using Elasticsearch with support for Keyword, Semantic Search, and AI Agent Builder.
 
 ## Features
 
-- **BM25 Search**: Traditional keyword-based search with fuzzy matching
+- **Keyword Search**: Traditional keyword-based search with fuzzy matching
 - **Semantic Search**: Vector-based semantic search using ELSER model
 - **AI Agent Search**: AI-powered search with tool calling capabilities
 
@@ -40,12 +40,12 @@ This app searches the 'contracts' index in Elasticsearch, despite being named "F
 ## Usage
 
 1. Enter your search query in the search box
-2. Select your preferred search mode (BM25, Semantic, or AI Agent)
+2. Select your preferred search mode (Keyword, Semantic, or AI Agent)
 3. Click the search button or press Enter
 4. Results will display below with highlights and metadata
 
 ## Search Modes
 
-- **BM25**: Best for exact keyword matches and traditional text search
+- **Keyword**: Best for exact keyword matches and traditional text search
 - **Semantic**: Best for finding conceptually similar content, even without exact keyword matches
 - **AI Agent**: Advanced search that combines semantic understanding with AI-powered analysis

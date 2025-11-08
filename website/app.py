@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""AIR Search - Flask web app for searching flights, airlines, and contracts indices with BM25, Semantic, and AI Agent search."""
+"""AIR Search - Flask web app for searching flights, airlines, and contracts indices with Keyword, Semantic, and AI Agent search."""
 
 import json
 import logging
@@ -91,24 +91,30 @@ def make_es_request(method: str, path: str, body: Optional[Dict] = None) -> Dict
     if auth_header:
         headers['Authorization'] = auth_header
     
+    # Log the request in Kibana Dev Tools format (only for _search and _query endpoints)
+    # Extract just the path and index from the full URL
+    request_path = full_path
+    if body and ('/_search' in request_path or '/_query' in request_path):
+        LOGGER.info(f"\n{'='*80}\nKibana Dev Tools Format:\n{'='*80}\n{method} {request_path}\n{json.dumps(body, indent=2)}\n{'='*80}")
+
     # Build request
     if body:
         data = json.dumps(body).encode('utf-8')
         req = urllib_request.Request(url, data=data, headers=headers, method=method)
     else:
         req = urllib_request.Request(url, headers=headers, method=method)
-    
+
     # SSL context
     ssl_verify = config.get('ssl_verify', True)
     if isinstance(ssl_verify, str):
         ssl_verify = ssl_verify.lower() not in ('false', '0', 'no', 'n')
-    
+
     context = None
     if parsed.scheme == 'https' and not ssl_verify:
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-    
+
     try:
         with urllib_request.urlopen(req, context=context) as response:
             return json.loads(response.read().decode('utf-8'))
@@ -131,7 +137,7 @@ def index():
 def search():
     """Search endpoint that routes to appropriate search type."""
     data = request.get_json() or {}
-    search_type = data.get('type', 'bm25')
+    search_type = data.get('type', 'keyword')
     query = data.get('query', '').strip()
     index_name = data.get('index', 'all')  # 'all', 'flights', 'airlines', or 'contracts'
     filters = data.get('filters', {})  # Extract filters from request
@@ -571,18 +577,37 @@ def search_flights_fallback(query: str, search_type: str, size: int = 20, filter
 def search_airlines(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Search airlines index."""
     if query:
-        # Use .text subfield for full-text search on the text-searchable field
-        query_clause = {
-            "multi_match": {
-                "query": query,
-                "fields": [
-                    "Airline_Name.text^2",
-                    "Reporting_Airline^1.5"
-                ],
-                "type": "best_fields",
-                "fuzziness": "AUTO"
+        if search_type == 'keyword':
+            # Only search the text subfield
+            query_clause = {
+                "match": {
+                    "Airline_Name.text": {
+                        "query": query,
+                        "fuzziness": "AUTO"
+                    }
+                }
             }
-        }
+        elif search_type == 'semantic':
+            # Only search the semantic_text subfield
+            query_clause = {
+                "semantic": {
+                    "field": "Airline_Name.semantic",
+                    "query": query
+                }
+            }
+        else:
+            # For ai search, use multi_match with both fields
+            query_clause = {
+                "multi_match": {
+                    "query": query,
+                    "fields": [
+                        "Airline_Name.text^2",
+                        "Reporting_Airline^1.5"
+                    ],
+                    "type": "best_fields",
+                    "fuzziness": "AUTO"
+                }
+            }
     else:
         query_clause = {"match_all": {}}
 
@@ -606,18 +631,32 @@ def search_airlines(query: str, search_type: str, size: int = 20, filters: Optio
         "_source": {
             "includes": ["Reporting_Airline", "Airline_Name"]
         },
-        "highlight": {
-            "fields": {
-                "Airline_Name.text": {},
-                "Reporting_Airline": {}
-            }
-        },
         "aggs": {
             "airline_codes": {
                 "terms": {"field": "Reporting_Airline", "size": 50, "order": {"_key": "asc"}}
             }
         }
     }
+
+    # Add appropriate highlighting based on search type
+    if query:
+        if search_type == 'semantic':
+            body["highlight"] = {
+                "fields": {
+                    "Airline_Name.semantic": {
+                        "type": "semantic",
+                        "number_of_fragments": 1,
+                        "fragment_size": 200
+                    }
+                }
+            }
+        else:
+            body["highlight"] = {
+                "fields": {
+                    "Airline_Name.text": {},
+                    "Reporting_Airline": {}
+                }
+            }
 
     # Get the search results
     search_result = make_es_request('POST', '/airlines/_search', body)
@@ -644,12 +683,16 @@ def search_contracts(query: str, search_type: str, size: int = 20, filters: Opti
         return semantic_search(query, size, filters)
     elif search_type == 'ai':
         return ai_agent_search(query, size, filters)
-    else:  # bm25
-        return bm25_search(query, size, filters)
+    else:  # keyword
+        return keyword_search(query, size, filters)
 
 
-def bm25_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
-    """Perform BM25 (keyword) search on contracts index."""
+def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
+    """Perform Keyword search on contracts index.
+
+    Only searches text fields: attachment.content, attachment.title, attachment.description,
+    attachment.format, and attachment.keywords.
+    """
     if query:
         query_clause = {
             "multi_match": {
@@ -658,7 +701,8 @@ def bm25_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> D
                     "attachment.content^2",
                     "attachment.title^1.5",
                     "attachment.description",
-                    "filename"
+                    "attachment.format",
+                    "attachment.keywords"
                 ],
                 "type": "best_fields",
                 "fuzziness": "AUTO"
@@ -724,27 +768,16 @@ def bm25_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> D
 
 
 def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
-    """Perform semantic search using semantic_content field."""
+    """Perform semantic search using semantic_content field.
+
+    Only searches semantic_text field: semantic_content.
+    Uses semantic query with semantic highlighting for snippets.
+    """
     if query:
         query_clause = {
-            "bool": {
-                "should": [
-                    {
-                        "semantic": {
-                            "semantic_content": {
-                                "query": query
-                            }
-                        }
-                    },
-                    {
-                        "match": {
-                            "attachment.title": {
-                                "query": query,
-                                "boost": 0.5
-                            }
-                        }
-                    }
-                ]
+            "semantic": {
+                "field": "semantic_content",
+                "query": query
             }
         }
     else:
@@ -788,19 +821,6 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
         "_source": {
             "includes": ["filename", "attachment.title", "attachment.content", "upload_date", "attachment.author", "attachment.description"]
         },
-        "highlight": {
-            "fields": {
-                "attachment.content": {
-                    "fragment_size": 150,
-                    "number_of_fragments": 3
-                },
-                "attachment.title": {},
-                "attachment.description": {
-                    "fragment_size": 150,
-                    "number_of_fragments": 2
-                }
-            }
-        },
         "aggs": {
             "authors": {
                 "terms": {"field": "attachment.author.keyword", "size": 20, "order": {"_count": "desc"}}
@@ -816,13 +836,25 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
         }
     }
 
+    # Add semantic highlighting only if there's a query
+    if query:
+        body["highlight"] = {
+            "fields": {
+                "semantic_content": {
+                    "type": "semantic",
+                    "number_of_fragments": 3,
+                    "fragment_size": 150
+                }
+            }
+        }
+
     return make_es_request('POST', '/contracts/_search', body)
 
 
 def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Perform AI Agent Builder search with tool calling.
 
-    This uses a hybrid approach combining semantic and BM25 search,
+    This uses a hybrid approach combining semantic and Keyword search,
     and can optionally use Elasticsearch inference API for enhanced results.
     """
     if query:

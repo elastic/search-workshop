@@ -23,7 +23,7 @@ Follow PEP 8: four-space indentation, snake_case for Python functions, and desc
 ## Testing Guidelines
 Automated tests are not yet in place; perform manual smoke tests after each change. Start the server, open `http://localhost:5000`, verify all three search modes, and ensure filters update results. For API spot checks, POST to `/api/search` with `curl` to validate response structure:  
 ```bash
-curl -X POST http://localhost:5000/api/search -H "Content-Type: application/json" -d '{"query":"london","type":"bm25"}'
+curl -X POST http://localhost:5000/api/search -H "Content-Type: application/json" -d '{"query":"london","type":"keyword"}'
 ```
 Document any regressions or Elasticsearch errors in the PR description.
 

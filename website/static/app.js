@@ -1,5 +1,5 @@
 // State
-let currentSearchMode = 'bm25';
+let currentSearchMode = 'keyword';
 let currentQuery = '';
 let currentIndex = 'all';
 let searchTimeout = null;
@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Update URL and re-search if appropriate
             updateURL();
-            if (currentQuery || currentSearchMode === 'bm25' || currentSearchMode === 'semantic') {
+            if (currentQuery || currentSearchMode === 'keyword' || currentSearchMode === 'semantic') {
                 performSearch();
             }
         });
@@ -953,10 +953,10 @@ function resetSearch() {
     // Clear all filters
     currentFilters = {};
 
-    // Reset to default search mode (BM25)
-    currentSearchMode = 'bm25';
+    // Reset to default search mode (Keyword)
+    currentSearchMode = 'keyword';
     modeButtons.forEach(btn => {
-        if (btn.dataset.mode === 'bm25') {
+        if (btn.dataset.mode === 'keyword') {
             btn.classList.add('active');
             btn.classList.remove('btn-outline-primary');
             btn.classList.add('btn-primary');
@@ -1042,7 +1042,7 @@ function restoreSearchFromURL() {
     const index = params.get('index');
 
     // Restore search mode (even if no query)
-    if (type && ['bm25', 'semantic', 'ai'].includes(type)) {
+    if (type && ['keyword', 'semantic', 'ai'].includes(type)) {
         currentSearchMode = type;
         // Update button states
         modeButtons.forEach(btn => {
