@@ -58,6 +58,158 @@ function applyQueryHighlight(text, query) {
     return text.replace(pattern, '<mark class="result-highlight">$1</mark>');
 }
 
+function getQueryTokens(query) {
+    if (!query) {
+        return [];
+    }
+    return query.trim().split(/\s+/).filter(Boolean).map(token => token.toLowerCase());
+}
+
+function collectSemanticTermsFromEmbeddings(terms, embeddings, threshold) {
+    if (!embeddings) return;
+    Object.entries(embeddings).forEach(([token, value]) => {
+        if (typeof value === 'number' && value > threshold) {
+            terms.add(token);
+        }
+    });
+}
+
+function collectSemanticTermsFromChunks(terms, chunks, threshold) {
+    if (!chunks) return;
+
+    const processChunk = (chunk) => {
+        if (!chunk || typeof chunk !== 'object') return;
+        collectSemanticTermsFromEmbeddings(terms, chunk.embeddings, threshold);
+    };
+
+    if (Array.isArray(chunks)) {
+        chunks.forEach(processChunk);
+    } else if (typeof chunks === 'object') {
+        Object.values(chunks).forEach(entry => {
+            if (Array.isArray(entry)) {
+                entry.forEach(processChunk);
+            } else {
+                processChunk(entry);
+            }
+        });
+    }
+}
+
+function collectSemanticTermsFromField(terms, fieldValue, threshold) {
+    if (!fieldValue) return;
+
+    const values = Array.isArray(fieldValue) ? fieldValue : [fieldValue];
+    values.forEach(value => {
+        if (!value || typeof value !== 'object') return;
+        const inference = value.inference || value;
+        if (!inference || typeof inference !== 'object') return;
+        collectSemanticTermsFromChunks(terms, inference.chunks, threshold);
+    });
+}
+
+function collectSemanticTermsFromContainer(terms, container, fieldName, threshold) {
+    if (!container) return;
+
+    if (typeof container === 'string') {
+        try {
+            const parsed = JSON.parse(container);
+            collectSemanticTermsFromContainer(terms, parsed, fieldName, threshold);
+        } catch (err) {
+            return;
+        }
+        return;
+    }
+
+    if (Array.isArray(container)) {
+        container.forEach(item => collectSemanticTermsFromContainer(terms, item, fieldName, threshold));
+        return;
+    }
+
+    if (typeof container !== 'object') return;
+
+    const fieldValue = container[fieldName];
+    if (fieldValue) {
+        collectSemanticTermsFromField(terms, fieldValue, threshold);
+    }
+}
+
+function getSemanticHighlightTerms(hit, fieldName = 'Airline_Name.semantic', threshold = 1.0) {
+    const terms = new Set();
+    if (!hit) return terms;
+
+    collectSemanticTermsFromContainer(terms, hit._source?._inference_fields, fieldName, threshold);
+    collectSemanticTermsFromContainer(terms, hit.fields?._inference_fields, fieldName, threshold);
+
+    return terms;
+}
+
+function applySemanticHighlight(text, terms, queryTokens = []) {
+    if (!text || !terms || terms.size === 0) {
+        return text;
+    }
+
+    const queryTokenSet = new Set(queryTokens.map(token => token.toLowerCase()));
+    const tokens = Array.from(terms)
+        .filter(token => !queryTokenSet.has(String(token).toLowerCase()))
+        .sort((a, b) => b.length - a.length);
+    if (tokens.length === 0) {
+        return text;
+    }
+
+    const pattern = new RegExp(`\\b(${tokens.map(escapeForRegex).join('|')})\\b`, 'gi');
+
+    return text.split(/(<[^>]+>)/g).map(segment => {
+        if (/^<[^>]+>$/.test(segment)) {
+            return segment;
+        }
+        return segment.replace(pattern, '<mark class="semantic-highlight">$1</mark>');
+    }).join('');
+}
+
+function ensureQueryHighlight(text, queryTokens) {
+    if (!text || !queryTokens || queryTokens.length === 0) {
+        return text;
+    }
+
+    const container = document.createElement('div');
+    container.innerHTML = text;
+
+    const tokenPattern = new RegExp(`(${queryTokens.map(escapeForRegex).join('|')})`, 'gi');
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+    const textNodes = [];
+
+    while (walker.nextNode()) {
+        textNodes.push(walker.currentNode);
+    }
+
+    textNodes.forEach(node => {
+        const value = node.nodeValue;
+        if (!value) return;
+
+        let ancestor = node.parentNode;
+        while (ancestor) {
+            if (ancestor.nodeType === 1 && ancestor.tagName === 'MARK') {
+                return;
+            }
+            ancestor = ancestor.parentNode;
+        }
+
+        tokenPattern.lastIndex = 0;
+        const replacedValue = value.replace(tokenPattern, '<mark class="result-highlight">$1</mark>');
+        if (replacedValue === value) return;
+
+        const temp = document.createElement('span');
+        temp.innerHTML = replacedValue;
+        const fragment = document.createDocumentFragment();
+        while (temp.firstChild) {
+            fragment.appendChild(temp.firstChild);
+        }
+        node.parentNode.replaceChild(fragment, node);
+    });
+
+    return container.innerHTML;
+}
+
 function renderHighlightedText(text) {
     if (text == null) {
         return '';
@@ -69,6 +221,10 @@ function renderHighlightedText(text) {
     return div.innerHTML
         .replace(/&lt;mark class=&quot;result-highlight&quot;&gt;/g, '<mark class="result-highlight">')
         .replace(/&lt;mark class=&#39;result-highlight&#39;&gt;/g, '<mark class="result-highlight">')
+        .replace(/&lt;mark class=&quot;semantic-highlight&quot;&gt;/g, '<mark class="semantic-highlight">')
+        .replace(/&lt;mark class=&#39;semantic-highlight&#39;&gt;/g, '<mark class="semantic-highlight">')
+        .replace(/&lt;mark class="semantic-highlight"&gt;/g, '<mark class="semantic-highlight">')
+        .replace(/&lt;mark class='semantic-highlight'&gt;/g, '<mark class="semantic-highlight">')
         .replace(/&lt;mark class="result-highlight"&gt;/g, '<mark class="result-highlight">')
         .replace(/&lt;mark class='result-highlight'&gt;/g, '<mark class="result-highlight">')
         .replace(/&lt;\/mark&gt;/g, '</mark>');
@@ -757,7 +913,10 @@ function displayResults(data) {
     const total = data.hits.total;
     let html = '';
     
-    hits.forEach(hit => {
+    const showHighlightLegend = currentSearchMode === 'semantic' &&
+        (currentIndex === 'airlines' || currentIndex === 'all');
+
+    hits.forEach((hit, indexPosition) => {
         const source = hit._source || {};
         const highlight = hit.highlight || {};
         const rawIndexName = hit._index || currentIndex || 'unknown';
@@ -823,6 +982,20 @@ function displayResults(data) {
             }
             
         } else if (indexName === 'airlines') {
+            if (showHighlightLegend && indexPosition === 0) {
+                html += `
+                    <div class="match-legend" role="status" aria-label="Highlight legend">
+                        <span class="legend-item">
+                            <span class="legend-swatch legend-swatch-keyword"></span>
+                            Keyword
+                        </span>
+                        <span class="legend-item">
+                            <span class="legend-swatch legend-swatch-semantic"></span>
+                            Semantic / Similar
+                        </span>
+                    </div>
+                `;
+            }
             // Airlines index - two field format
             // Prefer semantic highlight, then text highlight, then source values
             let airlineName = highlight['Airline_Name.semantic']?.[0] ||
@@ -831,13 +1004,29 @@ function displayResults(data) {
                               '';
             let code = highlight['Reporting_Airline']?.[0] || '';
 
+            const isSemanticMode = currentSearchMode === 'semantic';
+            const semanticTerms = isSemanticMode ? getSemanticHighlightTerms(hit) : null;
+            const highlightClass = isSemanticMode ? 'semantic-highlight' : 'result-highlight';
+            const queryTokens = getQueryTokens(currentQuery);
+
             if (airlineName) {
                 airlineName = airlineName
-                    .replace(/<em>/g, '<mark class="result-highlight">')
+                    .replace(/<em>/g, `<mark class="${highlightClass}">`)
                     .replace(/<\/em>/g, '</mark>');
-                airlineName = applyQueryHighlight(airlineName, currentQuery);
             } else {
-                airlineName = applyQueryHighlight(source.Airline_Name || 'Unknown Airline', currentQuery);
+                airlineName = source.Airline_Name || 'Unknown Airline';
+            }
+
+            if (isSemanticMode) {
+                const semanticallyHighlighted = applySemanticHighlight(airlineName, semanticTerms, queryTokens);
+                const withQueryHighlight = ensureQueryHighlight(semanticallyHighlighted, queryTokens);
+                if (withQueryHighlight === semanticallyHighlighted && currentQuery) {
+                    airlineName = applyQueryHighlight(airlineName, currentQuery);
+                } else {
+                    airlineName = withQueryHighlight;
+                }
+            } else {
+                airlineName = applyQueryHighlight(airlineName, currentQuery);
             }
 
             if (code) {
