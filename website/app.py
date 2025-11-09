@@ -853,8 +853,10 @@ def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -
     body = {
         "query": query_clause,
         "size": size,
+        "fields": ["_inference_fields"],
         "_source": {
-            "includes": ["filename", "attachment.title", "attachment.content", "upload_date", "attachment.author", "attachment.description"]
+            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description"],
+            "excludes": ["attachment.content", "content"]
         },
         "highlight": {
             "fields": {
@@ -1128,8 +1130,10 @@ def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None, 
     body = {
         "query": query_clause,
         "size": size,
+        "fields": ["_inference_fields"],
         "_source": {
-            "includes": ["filename", "attachment.title", "attachment.content", "upload_date", "attachment.author", "attachment.description"]
+            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description"],
+            "excludes": ["attachment.content", "content"]
         },
         "highlight": {
             "fields": {

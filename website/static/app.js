@@ -83,15 +83,16 @@ function collectSemanticTermsFromChunks(terms, chunks, threshold) {
     };
 
     if (Array.isArray(chunks)) {
-        chunks.forEach(processChunk);
+        if (chunks.length > 0) {
+            processChunk(chunks[0]);
+        }
     } else if (typeof chunks === 'object') {
-        Object.values(chunks).forEach(entry => {
-            if (Array.isArray(entry)) {
-                entry.forEach(processChunk);
-            } else {
-                processChunk(entry);
-            }
-        });
+        const firstEntry = Object.values(chunks).find(value => value != null);
+        if (Array.isArray(firstEntry) && firstEntry.length > 0) {
+            processChunk(firstEntry[0]);
+        } else if (firstEntry && typeof firstEntry === 'object') {
+            processChunk(firstEntry);
+        }
     }
 }
 
@@ -208,6 +209,21 @@ function ensureQueryHighlight(text, queryTokens) {
     });
 
     return container.innerHTML;
+}
+
+function convertEmTags(text, { defaultClass = 'result-highlight', queryTokens = [] } = {}) {
+    if (!text) {
+        return text;
+    }
+
+    const normalizedTokens = queryTokens.map(token => token.toLowerCase());
+
+    return text.replace(/<em>([\s\S]*?)<\/em>/gi, (match, inner) => {
+        const normalizedInner = inner.replace(/<[^>]+>/g, ' ').toLowerCase();
+        const hasQueryToken = normalizedTokens.length > 0 && normalizedTokens.some(token => normalizedInner.includes(token));
+        const targetClass = hasQueryToken ? 'result-highlight' : defaultClass;
+        return `<mark class="${targetClass}">${inner}</mark>`;
+    });
 }
 
 function renderHighlightedText(text) {
@@ -913,10 +929,25 @@ function displayResults(data) {
     const total = data.hits.total;
     let html = '';
     
-    const showHighlightLegend = currentSearchMode === 'semantic' &&
-        (currentIndex === 'airlines' || currentIndex === 'all');
+    const isSemanticModeGlobal = currentSearchMode === 'semantic';
+    const showHighlightLegend = isSemanticModeGlobal &&
+        (currentIndex === 'airlines' || currentIndex === 'contracts' || currentIndex === 'all');
+    const highlightLegendHtml = `
+        <div class="match-legend" role="status" aria-label="Highlight legend">
+            <span class="legend-item">
+                <span class="legend-swatch legend-swatch-keyword"></span>
+                Keyword
+            </span>
+            <span class="legend-item">
+                <span class="legend-swatch legend-swatch-semantic"></span>
+                Semantic / Similar
+            </span>
+        </div>
+    `;
+    let legendInserted = false;
+    const queryTokensGlobal = getQueryTokens(currentQuery);
 
-    hits.forEach((hit, indexPosition) => {
+    hits.forEach((hit) => {
         const source = hit._source || {};
         const highlight = hit.highlight || {};
         const rawIndexName = hit._index || currentIndex || 'unknown';
@@ -929,7 +960,17 @@ function displayResults(data) {
         } else if (currentIndex === 'flights' && (rawIndexName === 'unknown' || !rawIndexName)) {
             indexName = 'flights';
         }
-        
+
+        const isSemanticMode = isSemanticModeGlobal;
+        let semanticTerms = null;
+        if (isSemanticMode) {
+            if (indexName === 'airlines') {
+                semanticTerms = getSemanticHighlightTerms(hit);
+            } else if (indexName === 'contracts') {
+                semanticTerms = getSemanticHighlightTerms(hit, 'semantic_content');
+            }
+        }
+
         let title, url, snippets, meta;
         
         // Format results based on index type
@@ -982,19 +1023,9 @@ function displayResults(data) {
             }
             
         } else if (indexName === 'airlines') {
-            if (showHighlightLegend && indexPosition === 0) {
-                html += `
-                    <div class="match-legend" role="status" aria-label="Highlight legend">
-                        <span class="legend-item">
-                            <span class="legend-swatch legend-swatch-keyword"></span>
-                            Keyword
-                        </span>
-                        <span class="legend-item">
-                            <span class="legend-swatch legend-swatch-semantic"></span>
-                            Semantic / Similar
-                        </span>
-                    </div>
-                `;
+            if (showHighlightLegend && !legendInserted) {
+                html += highlightLegendHtml;
+                legendInserted = true;
             }
             // Airlines index - two field format
             // Prefer semantic highlight, then text highlight, then source values
@@ -1004,22 +1035,20 @@ function displayResults(data) {
                               '';
             let code = highlight['Reporting_Airline']?.[0] || '';
 
-            const isSemanticMode = currentSearchMode === 'semantic';
-            const semanticTerms = isSemanticMode ? getSemanticHighlightTerms(hit) : null;
             const highlightClass = isSemanticMode ? 'semantic-highlight' : 'result-highlight';
-            const queryTokens = getQueryTokens(currentQuery);
 
             if (airlineName) {
-                airlineName = airlineName
-                    .replace(/<em>/g, `<mark class="${highlightClass}">`)
-                    .replace(/<\/em>/g, '</mark>');
+                airlineName = convertEmTags(airlineName, {
+                    defaultClass: highlightClass,
+                    queryTokens: queryTokensGlobal
+                });
             } else {
                 airlineName = source.Airline_Name || 'Unknown Airline';
             }
 
             if (isSemanticMode) {
-                const semanticallyHighlighted = applySemanticHighlight(airlineName, semanticTerms, queryTokens);
-                const withQueryHighlight = ensureQueryHighlight(semanticallyHighlighted, queryTokens);
+                const semanticallyHighlighted = applySemanticHighlight(airlineName, semanticTerms, queryTokensGlobal);
+                const withQueryHighlight = ensureQueryHighlight(semanticallyHighlighted, queryTokensGlobal) || semanticallyHighlighted;
                 if (withQueryHighlight === semanticallyHighlighted && currentQuery) {
                     airlineName = applyQueryHighlight(airlineName, currentQuery);
                 } else {
@@ -1030,9 +1059,10 @@ function displayResults(data) {
             }
 
             if (code) {
-                code = code
-                    .replace(/<em>/g, '<mark class="result-highlight">')
-                    .replace(/<\/em>/g, '</mark>');
+                code = convertEmTags(code, {
+                    defaultClass: 'result-highlight',
+                    queryTokens: queryTokensGlobal
+                });
                 code = applyQueryHighlight(code, currentQuery);
             } else {
                 code = applyQueryHighlight(source.Reporting_Airline || 'N/A', currentQuery);
@@ -1044,16 +1074,31 @@ function displayResults(data) {
             meta = [];
             
         } else {
+            if (showHighlightLegend && !legendInserted) {
+                html += highlightLegendHtml;
+                legendInserted = true;
+            }
             // Contracts index (original logic)
             const rawTitle = highlight['attachment.title']?.[0] ||
                              source.attachment?.title ||
                              source.filename ||
                              'Untitled';
 
-            title = rawTitle
-                .replace(/<em>/g, '<mark class="result-highlight">')
-                .replace(/<\/em>/g, '</mark>');
-            title = applyQueryHighlight(title, currentQuery);
+            const highlightClass = isSemanticMode ? 'semantic-highlight' : 'result-highlight';
+
+            let processedTitle = convertEmTags(rawTitle, {
+                defaultClass: highlightClass,
+                queryTokens: queryTokensGlobal
+            });
+
+            if (isSemanticMode) {
+                processedTitle = applySemanticHighlight(processedTitle, semanticTerms, queryTokensGlobal);
+                processedTitle = ensureQueryHighlight(processedTitle, queryTokensGlobal) || processedTitle;
+            } else {
+                processedTitle = applyQueryHighlight(processedTitle, currentQuery);
+            }
+
+            title = processedTitle;
 
             url = source.filename || 'Unknown file';
             
@@ -1080,13 +1125,23 @@ function displayResults(data) {
         // Build snippet HTML - process <em> tags in snippets
         const snippetHtml = snippets.map(snippet => {
             if (typeof snippet === 'string') {
-                const highlighted = applyQueryHighlight(
-                    snippet
-                    .replace(/<em>/g, '<mark class="result-highlight">')
-                    .replace(/<\/em>/g, '</mark>'),
-                    currentQuery
-                );
-                return renderHighlightedText(highlighted);
+                const snippetHighlightClass = (isSemanticMode && (indexName === 'airlines' || indexName === 'contracts'))
+                    ? 'semantic-highlight'
+                    : 'result-highlight';
+                const baseSnippet = convertEmTags(snippet, {
+                    defaultClass: snippetHighlightClass,
+                    queryTokens: queryTokensGlobal
+                });
+                let snippetProcessed = baseSnippet;
+                if (isSemanticMode && semanticTerms) {
+                    snippetProcessed = applySemanticHighlight(snippetProcessed, semanticTerms, queryTokensGlobal);
+                    snippetProcessed = ensureQueryHighlight(snippetProcessed, queryTokensGlobal) || snippetProcessed;
+                } else if (isSemanticMode) {
+                    snippetProcessed = ensureQueryHighlight(snippetProcessed, queryTokensGlobal) || snippetProcessed;
+                } else {
+                    snippetProcessed = applyQueryHighlight(snippetProcessed, currentQuery);
+                }
+                return renderHighlightedText(snippetProcessed);
             }
             return renderHighlightedText(String(snippet || ''));
         }).join(' ... ');
