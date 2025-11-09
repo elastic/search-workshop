@@ -329,6 +329,7 @@ body {
 .ai-message-assistant {
     align-self: flex-start;
     background: #fff;
+    min-width: 400px;
 }
 
 [data-bs-theme="dark"] .ai-message-assistant {
@@ -489,6 +490,9 @@ body {
 @media (max-width: 768px) {
     .ai-message {
         max-width: 100%;
+    }
+    .ai-message-assistant {
+        min-width: auto;
     }
 }
 

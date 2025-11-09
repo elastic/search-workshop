@@ -930,9 +930,10 @@ function displayResults(data) {
     let html = '';
     
     const isSemanticModeGlobal = currentSearchMode === 'semantic';
-    const showHighlightLegend = isSemanticModeGlobal &&
-        (currentIndex === 'airlines' || currentIndex === 'contracts' || currentIndex === 'all');
-    const highlightLegendHtml = `
+    const isKeywordModeGlobal = currentSearchMode === 'keyword';
+    const showHighlightLegend = (isSemanticModeGlobal || isKeywordModeGlobal) &&
+        (currentIndex === 'airlines' || currentIndex === 'contracts');
+    const highlightLegendHtmlSemantic = `
         <div class="match-legend" role="status" aria-label="Highlight legend">
             <span class="legend-item">
                 <span class="legend-swatch legend-swatch-keyword"></span>
@@ -944,6 +945,15 @@ function displayResults(data) {
             </span>
         </div>
     `;
+    const highlightLegendHtmlKeyword = `
+        <div class="match-legend" role="status" aria-label="Highlight legend">
+            <span class="legend-item">
+                <span class="legend-swatch legend-swatch-keyword"></span>
+                Keyword
+            </span>
+        </div>
+    `;
+    const highlightLegendHtml = isSemanticModeGlobal ? highlightLegendHtmlSemantic : highlightLegendHtmlKeyword;
     let legendInserted = false;
     const queryTokensGlobal = getQueryTokens(currentQuery);
 
