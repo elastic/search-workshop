@@ -35,6 +35,45 @@ const TEXT_EXTRACTION_KEYS = [
     'body'
 ];
 
+function escapeForRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applyQueryHighlight(text, query) {
+    if (!text || !query) {
+        return text;
+    }
+
+    // Skip if highlight markup already present
+    if (/<(?:em|mark)\b/i.test(text)) {
+        return text;
+    }
+
+    const terms = query.trim().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) {
+        return text;
+    }
+
+    const pattern = new RegExp(`(${terms.map(escapeForRegex).join('|')})`, 'gi');
+    return text.replace(pattern, '<mark class="result-highlight">$1</mark>');
+}
+
+function renderHighlightedText(text) {
+    if (text == null) {
+        return '';
+    }
+
+    const div = document.createElement('div');
+    div.textContent = text;
+
+    return div.innerHTML
+        .replace(/&lt;mark class=&quot;result-highlight&quot;&gt;/g, '<mark class="result-highlight">')
+        .replace(/&lt;mark class=&#39;result-highlight&#39;&gt;/g, '<mark class="result-highlight">')
+        .replace(/&lt;mark class="result-highlight"&gt;/g, '<mark class="result-highlight">')
+        .replace(/&lt;mark class='result-highlight'&gt;/g, '<mark class="result-highlight">')
+        .replace(/&lt;\/mark&gt;/g, '</mark>');
+}
+
 function extractTextFromPayload(payload) {
     const segments = [];
     const visited = new WeakSet();
@@ -785,21 +824,29 @@ function displayResults(data) {
             
         } else if (indexName === 'airlines') {
             // Airlines index - two field format
-            // Check for highlight on the .text subfield
-            let airlineName = highlight['Airline_Name.text']?.[0] || highlight['Airline_Name']?.[0] || '';
+            // Prefer semantic highlight, then text highlight, then source values
+            let airlineName = highlight['Airline_Name.semantic']?.[0] ||
+                              highlight['Airline_Name.text']?.[0] ||
+                              highlight['Airline_Name']?.[0] ||
+                              '';
             let code = highlight['Reporting_Airline']?.[0] || '';
 
-            // Process highlights - replace <em> tags with highlight markup if highlights exist
             if (airlineName) {
-                airlineName = airlineName.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
+                airlineName = airlineName
+                    .replace(/<em>/g, '<mark class="result-highlight">')
+                    .replace(/<\/em>/g, '</mark>');
+                airlineName = applyQueryHighlight(airlineName, currentQuery);
             } else {
-                airlineName = source.Airline_Name || 'Unknown Airline';
+                airlineName = applyQueryHighlight(source.Airline_Name || 'Unknown Airline', currentQuery);
             }
 
             if (code) {
-                code = code.replace(/<em>/g, '<mark class="result-highlight">').replace(/<\/em>/g, '</mark>');
+                code = code
+                    .replace(/<em>/g, '<mark class="result-highlight">')
+                    .replace(/<\/em>/g, '</mark>');
+                code = applyQueryHighlight(code, currentQuery);
             } else {
-                code = source.Reporting_Airline || 'N/A';
+                code = applyQueryHighlight(source.Reporting_Airline || 'N/A', currentQuery);
             }
             
             title = airlineName;
@@ -809,11 +856,16 @@ function displayResults(data) {
             
         } else {
             // Contracts index (original logic)
-            title = highlight['attachment.title']?.[0] || 
-                    source.attachment?.title || 
-                    source.filename || 
-                    'Untitled';
-            
+            const rawTitle = highlight['attachment.title']?.[0] ||
+                             source.attachment?.title ||
+                             source.filename ||
+                             'Untitled';
+
+            title = rawTitle
+                .replace(/<em>/g, '<mark class="result-highlight">')
+                .replace(/<\/em>/g, '</mark>');
+            title = applyQueryHighlight(title, currentQuery);
+
             url = source.filename || 'Unknown file';
             
             snippets = highlight['attachment.description'] || highlight['attachment.content'] || [];
@@ -839,11 +891,15 @@ function displayResults(data) {
         // Build snippet HTML - process <em> tags in snippets
         const snippetHtml = snippets.map(snippet => {
             if (typeof snippet === 'string') {
-                return snippet
+                const highlighted = applyQueryHighlight(
+                    snippet
                     .replace(/<em>/g, '<mark class="result-highlight">')
-                    .replace(/<\/em>/g, '</mark>');
+                    .replace(/<\/em>/g, '</mark>'),
+                    currentQuery
+                );
+                return renderHighlightedText(highlighted);
             }
-            return snippet;
+            return renderHighlightedText(String(snippet || ''));
         }).join(' ... ');
         
         // Add index badge with consistent styling
@@ -1017,7 +1073,7 @@ function displayResults(data) {
                 <div class="result-item result-item-contracts">
                     <div class="d-flex justify-content-between align-items-start">
                         <h6 class="fw-bold">
-                            <i class="bi bi-file-earmark-text me-2"></i>${escapeHtml(title)}
+                            <i class="bi bi-file-earmark-text me-2"></i>${renderHighlightedText(title)}
                         </h6>
                         ${indexBadge}
                     </div>
