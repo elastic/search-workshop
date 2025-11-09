@@ -1,0 +1,241 @@
+{
+  "took": 4,
+  "timed_out": false,
+  "_shards": {
+    "total": 1,
+    "successful": 1,
+    "skipped": 0,
+    "failed": 0
+  },
+  "hits": {
+    "total": {
+      "value": 417,
+      "relation": "eq"
+    },
+    "max_score": 11.921457,
+    "hits": [
+      {
+        "_index": "airlines",
+        "_id": "DcuiY5oBhrFIL_cg92ot",
+        "_score": 11.921457,
+        "_source": {
+          "Reporting_Airline": "WN",
+          "Airline_Name": "Southwest Airlines",
+          "_inference_fields": {
+            "Airline_Name.semantic": {
+              "inference": {
+                "inference_id": ".elser-2-elasticsearch",
+                "model_settings": {
+                  "service": "elasticsearch",
+                  "task_type": "sparse_embedding"
+                },
+                "chunks": {
+                  "Airline_Name": [
+                    {
+                      "start_offset": 0,
+                      "end_offset": 18,
+                      "embeddings": {
+                        "air": 0.31445312,
+                        "airbus": 0.20214844,
+                        "airline": 1.0859375,
+                        "airlines": 1.515625,
+                        "airport": 0.061279297,
+                        "alaska": 0.5703125,
+                        "arizona": 0.4326172,
+                        "aviation": 0.1484375,
+                        "award": 0.14892578,
+                        "bird": 0.33691406,
+                        "cabin": 0.2368164,
+                        "cheap": 0.27148438,
+                        "eagle": 0.080322266,
+                        "explorer": 0.088134766,
+                        "finch": 0.15771484,
+                        "fleet": 0.5097656,
+                        "flight": 1.1367188,
+                        "flights": 0.49414062,
+                        "florida": 0.024536133,
+                        "flyer": 0.5703125,
+                        "frontier": 0.7128906,
+                        "northwest": 1.6328125,
+                        "onboard": 0.19921875,
+                        "passenger": 0.37109375,
+                        "phoenix": 0.018493652,
+                        "pilot": 0.3798828,
+                        "regional": 0.12597656,
+                        "reservation": 0.20654297,
+                        "seat": 0.41015625,
+                        "south": 0.66796875,
+                        "southwest": 2.8359375,
+                        "southwestern": 0.2607422,
+                        "spirit": 0.3330078,
+                        "ticket": 0.734375,
+                        "travel": 0.14208984,
+                        "united": 0.3876953,
+                        "usa": 0.12231445
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "highlight": {
+          "Airline_Name.semantic": [
+            "Southwest Airlines"
+          ]
+        }
+      },
+      {
+        "_index": "airlines",
+        "_id": "p8uiY5oBhrFIL_cg92kt",
+        "_score": 10.684894,
+        "_source": {
+          "Reporting_Airline": "PS",
+          "Airline_Name": "Pacific Southwest Airlines",
+          "_inference_fields": {
+            "Airline_Name.semantic": {
+              "inference": {
+                "inference_id": ".elser-2-elasticsearch",
+                "model_settings": {
+                  "service": "elasticsearch",
+                  "task_type": "sparse_embedding"
+                },
+                "chunks": {
+                  "Airline_Name": [
+                    {
+                      "start_offset": 0,
+                      "end_offset": 26,
+                      "embeddings": {
+                        "air": 0.39648438,
+                        "airbus": 0.13867188,
+                        "airline": 1.1171875,
+                        "airlines": 1.4492188,
+                        "airport": 0.4423828,
+                        "alaska": 0.9453125,
+                        "arizona": 0.59375,
+                        "asia": 0.05493164,
+                        "australia": 0.024414062,
+                        "aviation": 0.28710938,
+                        "bird": 0.2939453,
+                        "boeing": 0.033325195,
+                        "cabin": 0.068359375,
+                        "california": 0.49804688,
+                        "cheap": 0.12548828,
+                        "disney": 0.063964844,
+                        "eagle": 0.14697266,
+                        "explorer": 0.19726562,
+                        "fleet": 0.6777344,
+                        "flight": 1.2148438,
+                        "flights": 0.3408203,
+                        "fly": 0.16503906,
+                        "flyer": 0.45410156,
+                        "frontier": 0.65234375,
+                        "hawaii": 0.45507812,
+                        "hawaiian": 0.119140625,
+                        "northwest": 1.5273438,
+                        "pacific": 2.3671875,
+                        "passenger": 0.34472656,
+                        "peru": 0.040039062,
+                        "pilot": 0.4013672,
+                        "reservation": 0.010986328,
+                        "seat": 0.028198242,
+                        "seattle": 0.2548828,
+                        "south": 0.33203125,
+                        "southeast": 0.020324707,
+                        "southwest": 2.6328125,
+                        "southwestern": 0.18554688,
+                        "spirit": 0.2578125,
+                        "ticket": 0.42089844,
+                        "united": 0.29882812,
+                        "usa": 0.24023438
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "highlight": {
+          "Airline_Name.semantic": [
+            "Pacific Southwest Airlines"
+          ]
+        }
+      },
+      {
+        "_index": "airlines",
+        "_id": "gsuiY5oBhrFIL_cg92kt",
+        "_score": 8.640371,
+        "_source": {
+          "Reporting_Airline": "NW",
+          "Airline_Name": "Northwest Airlines",
+          "_inference_fields": {
+            "Airline_Name.semantic": {
+              "inference": {
+                "inference_id": ".elser-2-elasticsearch",
+                "model_settings": {
+                  "service": "elasticsearch",
+                  "task_type": "sparse_embedding"
+                },
+                "chunks": {
+                  "Airline_Name": [
+                    {
+                      "start_offset": 0,
+                      "end_offset": 18,
+                      "embeddings": {
+                        "about": 0.47558594,
+                        "air": 0.49023438,
+                        "airbus": 0.32910156,
+                        "airline": 1.203125,
+                        "airlines": 1.6054688,
+                        "airport": 0.5566406,
+                        "alaska": 1.0898438,
+                        "aviation": 0.53125,
+                        "cabin": 0.5332031,
+                        "canada": 0.29589844,
+                        "cheap": 0.02960205,
+                        "coast": 0.21142578,
+                        "company": 0.15185547,
+                        "craft": 0.35351562,
+                        "dakota": 0.11303711,
+                        "fleet": 0.8691406,
+                        "flight": 1.1796875,
+                        "fly": 0.044433594,
+                        "flyer": 0.19873047,
+                        "frontier": 0.5371094,
+                        "hub": 0.057739258,
+                        "international": 0.19433594,
+                        "network": 0.044799805,
+                        "northeast": 1.5351562,
+                        "northwest": 2.9453125,
+                        "northwestern": 0.40234375,
+                        "pilot": 0.01940918,
+                        "regional": 0.3720703,
+                        "route": 0.45214844,
+                        "routing": 0.14892578,
+                        "seattle": 0.8125,
+                        "southwest": 1.1132812,
+                        "spirit": 0.17919922,
+                        "ticket": 0.34472656,
+                        "united": 0.484375,
+                        "usa": 0.05456543,
+                        "washington": 0.19873047,
+                        "wright": 0.1875
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "highlight": {
+          "Airline_Name.semantic": [
+            "Northwest Airlines"
+          ]
+        }
+      }
+    ]
+  }
+}

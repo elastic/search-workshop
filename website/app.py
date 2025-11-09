@@ -603,8 +603,7 @@ def search_flights_fallback(query: str, search_type: str, size: int = 20, filter
                     "Dest^1.5",
                     "Tail_Number"
                 ],
-                "type": "best_fields",
-                "fuzziness": "AUTO"
+                "type": "best_fields"
             }
         }
     else:
@@ -697,8 +696,7 @@ def search_airlines(query: str, search_type: str, size: int = 20, filters: Optio
             query_clause = {
                 "match": {
                     "Airline_Name.text": {
-                        "query": query,
-                        "fuzziness": "AUTO"
+                        "query": query
                     }
                 }
             }
@@ -752,6 +750,10 @@ def search_airlines(query: str, search_type: str, size: int = 20, filters: Optio
             }
         }
     }
+
+    # Add fields for semantic queries
+    if search_type == 'semantic':
+        body["fields"] = ["_inference_fields"]
 
     # Add appropriate highlighting based on search type
     if query:
@@ -819,8 +821,7 @@ def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -
                     "attachment.format",
                     "attachment.keywords"
                 ],
-                "type": "best_fields",
-                "fuzziness": "AUTO"
+                "type": "best_fields"
             }
         }
     else:
@@ -944,6 +945,7 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
     body = {
         "query": query_clause,
         "size": size,
+        "fields": ["_inference_fields"],
         "_source": {
             "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description"],
             "excludes": ["attachment.content", "content"]

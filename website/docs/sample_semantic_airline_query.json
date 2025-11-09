@@ -1,0 +1,28 @@
+# POST /airlines/_search
+{
+  "query": {
+    "semantic": {
+      "field": "Airline_Name.semantic",
+      "query": "southwest"
+    }
+  },
+  "fields": [
+    "_inference_fields"
+  ],
+  "size": 3,
+  "_source": {
+    "includes": [
+      "Reporting_Airline",
+      "Airline_Name"
+    ]
+  },
+  "highlight": {
+    "fields": {
+      "Airline_Name.semantic": {
+        "type": "semantic",
+        "number_of_fragments": 1,
+        "fragment_size": 200
+      }
+    }
+  }
+}
