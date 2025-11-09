@@ -883,16 +883,35 @@ def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -
 
 
 def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
-    """Perform semantic search using semantic_content field.
+    """Perform semantic search using semantic_content field with hybrid search for snippets.
 
-    Only searches semantic_text field: semantic_content.
-    Uses semantic query with semantic highlighting for snippets.
+    Uses hybrid search combining semantic and text queries to get both:
+    - Semantic ranking from semantic_content field
+    - Text snippets from attachment.content and other text fields
     """
     if query:
+        # Hybrid search: combine semantic and text queries
         query_clause = {
-            "semantic": {
-                "field": "semantic_content",
-                "query": query
+            "bool": {
+                "should": [
+                    {
+                        "semantic": {
+                            "field": "semantic_content",
+                            "query": query
+                        }
+                    },
+                    {
+                        "multi_match": {
+                            "query": query,
+                            "fields": [
+                                "attachment.content",
+                                "attachment.title",
+                                "attachment.description"
+                            ],
+                            "type": "best_fields"
+                        }
+                    }
+                ]
             }
         }
     else:
@@ -915,26 +934,19 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
 
         if filter_clauses:
             # Wrap the existing query in a bool query with filters
-            if query:
-                query_clause = {
-                    "bool": {
-                        "must": [query_clause],
-                        "filter": filter_clauses
-                    }
+            query_clause = {
+                "bool": {
+                    "must": [query_clause],
+                    "filter": filter_clauses
                 }
-            else:
-                query_clause = {
-                    "bool": {
-                        "must": [{"match_all": {}}],
-                        "filter": filter_clauses
-                    }
-                }
+            }
 
     body = {
         "query": query_clause,
         "size": size,
         "_source": {
-            "includes": ["filename", "attachment.title", "attachment.content", "upload_date", "attachment.author", "attachment.description"]
+            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description"],
+            "excludes": ["attachment.content", "content"]
         },
         "aggs": {
             "authors": {
@@ -951,19 +963,25 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
         }
     }
 
-    # Add semantic highlighting only if there's a query
+    # Add text field highlighting to get readable snippets
     if query:
         body["highlight"] = {
             "fields": {
-                "semantic_content": {
-                    "type": "semantic",
-                    "number_of_fragments": 3,
-                    "fragment_size": 150
+                "attachment.content": {
+                    "fragment_size": 150,
+                    "number_of_fragments": 3
+                },
+                "attachment.title": {},
+                "attachment.description": {
+                    "fragment_size": 150,
+                    "number_of_fragments": 2
                 }
             }
         }
 
-    return make_es_request('POST', '/contracts/_search', body)
+    result = make_es_request('POST', '/contracts/_search', body)
+    result['search_type'] = 'semantic'
+    return result
 
 
 def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None, stream: bool = False):
