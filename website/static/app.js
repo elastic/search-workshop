@@ -890,7 +890,8 @@ function renderAIStream(data, context) {
         statusBadgeEl.classList.add('is-complete');
         context.hasFinalMessage = true;
     } else if (kind === 'error') {
-        const errorMsg = eventData.message || data.message || chunkText || 'Unknown error';
+        const defaultError = currentSearchMode === 'ai' ? 'Flight AI agent not setup' : 'Unknown error';
+        const errorMsg = eventData.message || data.message || chunkText || defaultError;
         appendInfoEvent('❌ Error', errorMsg);
         typingIndicatorEl.classList.remove('is-active');
         statusBadgeEl.textContent = 'Error';
