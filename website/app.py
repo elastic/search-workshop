@@ -846,16 +846,15 @@ def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -
     body = {
         "query": query_clause,
         "size": size,
-        "fields": ["_inference_fields"],
         "_source": {
-            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description"],
+            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description", "airline"],
             "excludes": ["attachment.content", "content"]
         },
         "highlight": {
             "fields": {
                 "attachment.content": {
-                    "fragment_size": 150,
-                    "number_of_fragments": 3
+                    "fragment_size": 350,
+                    "number_of_fragments": 5
                 }
             }
         },
@@ -918,7 +917,7 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
         "size": size,
         "fields": ["_inference_fields"],
         "_source": {
-            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description"],
+            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description", "airline"],
             "excludes": ["attachment.content", "content"]
         },
         "aggs": {
@@ -942,17 +941,17 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
             "fields": {
                 "semantic_content": {
                     "type": "semantic",
-                    "number_of_fragments": 3,
-                    "fragment_size": 20
+                    "number_of_fragments": 1,
+                    "fragment_size": 10
                 },
                 "attachment.content": {
-                    "fragment_size": 20,
-                    "number_of_fragments": 3
+                    "fragment_size": 10,
+                    "number_of_fragments": 1
                 },
                 "attachment.title": {},
                 "attachment.description": {
-                    "fragment_size": 20,
-                    "number_of_fragments": 2
+                    "fragment_size": 10,
+                    "number_of_fragments": 1
                 }
             }
         }
@@ -1106,7 +1105,7 @@ def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None, 
         "size": size,
         "fields": ["_inference_fields"],
         "_source": {
-            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description"],
+            "includes": ["filename", "attachment.title", "upload_date", "attachment.author", "attachment.description", "airline"],
             "excludes": ["attachment.content", "content"]
         },
         "highlight": {

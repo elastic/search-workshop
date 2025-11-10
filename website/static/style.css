@@ -105,11 +105,45 @@ body {
 .semantic-highlight {
     background: none;
     background-color: transparent;
-    padding: 0;
+    padding: 1px 2px;
+    border-radius: 3px;
     font-weight: 400;
     color: #4f46e5;
     text-decoration: none;
     line-height: 1.2;
+}
+
+.semantic-highlight.highlight-pulse {
+    animation: semanticPulse 1s ease-in-out;
+    transition: background-color 0.2s ease;
+}
+
+@keyframes semanticPulse {
+    0% {
+        background-color: rgba(79, 70, 229, 0.1);
+    }
+    50% {
+        background-color: rgba(79, 70, 229, 0.2);
+    }
+    100% {
+        background-color: rgba(79, 70, 229, 0.1);
+    }
+}
+
+@keyframes semanticPulseDark {
+    0% {
+        background-color: rgba(165, 180, 252, 0.15);
+    }
+    50% {
+        background-color: rgba(165, 180, 252, 0.25);
+    }
+    100% {
+        background-color: rgba(165, 180, 252, 0.15);
+    }
+}
+
+[data-bs-theme="dark"] .semantic-highlight.highlight-pulse {
+    animation: semanticPulseDark 1s ease-in-out;
 }
 
 [data-bs-theme="dark"] .semantic-highlight {
@@ -142,6 +176,14 @@ body {
     align-items: center;
     gap: 0.4rem;
     color: var(--bs-body-color);
+}
+
+.legend-item-clickable {
+    transition: opacity 0.2s ease;
+}
+
+.legend-item-clickable:hover {
+    opacity: 0.7;
 }
 
 .legend-swatch {

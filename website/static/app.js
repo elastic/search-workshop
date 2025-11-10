@@ -267,7 +267,8 @@ function renderHighlightedText(text) {
         .replace(/&lt;mark class='semantic-highlight'&gt;/g, '<mark class="semantic-highlight">')
         .replace(/&lt;mark class="result-highlight"&gt;/g, '<mark class="result-highlight">')
         .replace(/&lt;mark class='result-highlight'&gt;/g, '<mark class="result-highlight">')
-        .replace(/&lt;\/mark&gt;/g, '</mark>');
+        .replace(/&lt;\/mark&gt;/g, '</mark>')
+        .replace(/&lt;br&gt;/g, '<br>');
 }
 
 function extractTextFromPayload(payload) {
@@ -963,7 +964,7 @@ function displayResults(data) {
             <span class="legend-item">
                 <span class="result-highlight">Keyword</span>
             </span>
-            <span class="legend-item">
+            <span class="legend-item legend-item-clickable" id="semantic-legend-item" style="cursor: pointer;" title="Click to highlight semantic matches">
                 <span class="semantic-highlight">Semantic / Similar</span>
             </span>
         </div>
@@ -1144,7 +1145,8 @@ function displayResults(data) {
                 const content = source.attachment?.content;
                 const text = description || content || '';
                 if (text) {
-                    snippets = [text.substring(0, 200) + (text.length > 200 ? '...' : '')];
+                    const fallbackLimit = isSemanticMode ? 100 : 400;
+                    snippets = [text.substring(0, fallbackLimit) + (text.length > fallbackLimit ? '...' : '')];
                 }
             }
             
@@ -1155,6 +1157,9 @@ function displayResults(data) {
             }
             if (source.attachment?.author) {
                 meta.push(`Author: ${source.attachment.author}`);
+            }
+            if (source.airline) {
+                meta.push(`Airline: ${source.airline}`);
             }
         }
         
@@ -1177,13 +1182,23 @@ function displayResults(data) {
                 } else {
                     snippetProcessed = applyQueryHighlight(snippetProcessed, currentQuery);
                 }
+
+                // Convert newlines to <br> tags for semantic mode on contracts
+                if (isSemanticMode && indexName === 'contracts') {
+                    // Collapse multiple consecutive newlines into single <br>
+                    snippetProcessed = snippetProcessed.replace(/\n+/g, '<br>');
+                }
+
                 return renderHighlightedText(snippetProcessed);
             }
             return renderHighlightedText(String(snippet || ''));
         }).filter(fragment => fragment && fragment.trim());
 
         const snippetHtml = snippetFragments
-            .map(fragment => `<div class="snippet-fragment">${fragment}</div>`)
+            .map(fragment => {
+                const ellipsis = isKeywordModeGlobal ? '' : '…';
+                return `<div class="snippet-fragment">${ellipsis}${fragment}${ellipsis}</div>`;
+            })
             .join('');
         
         // Add index badge with consistent styling
@@ -1366,6 +1381,7 @@ function displayResults(data) {
                         ${meta.map(m => {
                             if (m.includes('Uploaded')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;
                             if (m.includes('Author')) return `<i class="bi bi-person me-1"></i>${m}`;
+                            if (m.includes('Airline')) return `<i class="bi bi-airplane-engines me-1"></i>${m}`;
                             return m;
                         }).join(' | ')}
                     </small>` : ''}
@@ -1399,6 +1415,12 @@ function displayResults(data) {
 
     // Always display sidebar with index selector and facets
     displayFacets(data.aggregations);
+    
+    // Add click handler for semantic legend item
+    const semanticLegendItem = document.getElementById('semantic-legend-item');
+    if (semanticLegendItem) {
+        semanticLegendItem.addEventListener('click', highlightSemanticMatches);
+    }
 }
 
 function displayFacets(aggregations) {
@@ -1957,6 +1979,27 @@ function restoreSearchFromURL() {
         currentQuery = '';
         performSearch();
     }
+}
+
+function highlightSemanticMatches() {
+    // Find all semantic-highlight elements in the results
+    const semanticHighlights = document.querySelectorAll('.semantic-highlight');
+    
+    if (semanticHighlights.length === 0) {
+        return;
+    }
+    
+    // Add pulse class to all semantic highlights
+    semanticHighlights.forEach(element => {
+        element.classList.add('highlight-pulse');
+    });
+    
+    // Remove the pulse class after animation completes (1s)
+    setTimeout(() => {
+        semanticHighlights.forEach(element => {
+            element.classList.remove('highlight-pulse');
+        });
+    }, 1000);
 }
 
 function escapeHtml(text) {
