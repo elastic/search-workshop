@@ -77,22 +77,46 @@ function collectSemanticTermsFromEmbeddings(terms, embeddings, threshold) {
 function collectSemanticTermsFromChunks(terms, chunks, threshold) {
     if (!chunks) return;
 
-    const processChunk = (chunk) => {
-        if (!chunk || typeof chunk !== 'object') return;
-        collectSemanticTermsFromEmbeddings(terms, chunk.embeddings, threshold);
-    };
+    const stack = Array.isArray(chunks) ? [...chunks] : [chunks];
+    const visited = new Set();
 
-    if (Array.isArray(chunks)) {
-        if (chunks.length > 0) {
-            processChunk(chunks[0]);
+    while (stack.length > 0) {
+        const current = stack.pop();
+        if (!current || typeof current !== 'object') {
+            continue;
         }
-    } else if (typeof chunks === 'object') {
-        const firstEntry = Object.values(chunks).find(value => value != null);
-        if (Array.isArray(firstEntry) && firstEntry.length > 0) {
-            processChunk(firstEntry[0]);
-        } else if (firstEntry && typeof firstEntry === 'object') {
-            processChunk(firstEntry);
+        if (visited.has(current)) {
+            continue;
         }
+        visited.add(current);
+
+        collectSemanticTermsFromEmbeddings(terms, current.embeddings, threshold);
+
+        const nextValues = [];
+        if (current.inference && typeof current.inference === 'object') {
+            nextValues.push(current.inference);
+        }
+        if (current.chunks) {
+            nextValues.push(current.chunks);
+        }
+        Object.values(current).forEach(value => {
+            if (!value || typeof value !== 'object') {
+                return;
+            }
+            if (value === current.embeddings || value === current.inference || value === current.chunks) {
+                return;
+            }
+            nextValues.push(value);
+        });
+
+        nextValues.forEach(value => {
+            if (!value) return;
+            if (Array.isArray(value)) {
+                value.forEach(item => stack.push(item));
+            } else if (typeof value === 'object') {
+                stack.push(value);
+            }
+        });
     }
 }
 
@@ -134,7 +158,7 @@ function collectSemanticTermsFromContainer(terms, container, fieldName, threshol
     }
 }
 
-function getSemanticHighlightTerms(hit, fieldName = 'Airline_Name.semantic', threshold = 1.0) {
+function getSemanticHighlightTerms(hit, fieldName = 'Airline_Name.semantic', threshold = 1.2) {
     const terms = new Set();
     if (!hit) return terms;
 
@@ -937,20 +961,17 @@ function displayResults(data) {
     const highlightLegendHtmlSemantic = `
         <div class="match-legend" role="status" aria-label="Highlight legend">
             <span class="legend-item">
-                <span class="legend-swatch legend-swatch-keyword"></span>
-                Keyword
+                <span class="result-highlight">Keyword</span>
             </span>
             <span class="legend-item">
-                <span class="legend-swatch legend-swatch-semantic"></span>
-                Semantic / Similar
+                <span class="semantic-highlight">Semantic / Similar</span>
             </span>
         </div>
     `;
     const highlightLegendHtmlKeyword = `
         <div class="match-legend" role="status" aria-label="Highlight legend">
             <span class="legend-item">
-                <span class="legend-swatch legend-swatch-keyword"></span>
-                Keyword
+                <span class="result-highlight">Keyword</span>
             </span>
         </div>
     `;
@@ -1113,7 +1134,11 @@ function displayResults(data) {
 
             url = source.filename || 'Unknown file';
             
-            snippets = highlight['attachment.description'] || highlight['attachment.content'] || [];
+            if (isSemanticMode && Array.isArray(highlight['semantic_content']) && highlight['semantic_content'].length > 0) {
+                snippets = highlight['semantic_content'];
+            } else {
+                snippets = highlight['attachment.description'] || highlight['attachment.content'] || [];
+            }
             if (snippets.length === 0) {
                 const description = source.attachment?.description;
                 const content = source.attachment?.content;
@@ -1134,7 +1159,7 @@ function displayResults(data) {
         }
         
         // Build snippet HTML - process <em> tags in snippets
-        const snippetHtml = snippets.map(snippet => {
+        const snippetFragments = snippets.map(snippet => {
             if (typeof snippet === 'string') {
                 const snippetHighlightClass = (isSemanticMode && (indexName === 'airlines' || indexName === 'contracts'))
                     ? 'semantic-highlight'
@@ -1155,7 +1180,11 @@ function displayResults(data) {
                 return renderHighlightedText(snippetProcessed);
             }
             return renderHighlightedText(String(snippet || ''));
-        }).join(' ... ');
+        }).filter(fragment => fragment && fragment.trim());
+
+        const snippetHtml = snippetFragments
+            .map(fragment => `<div class="snippet-fragment">${fragment}</div>`)
+            .join('');
         
         // Add index badge with consistent styling
         const badgeClass = indexName === 'flights'
@@ -1332,7 +1361,7 @@ function displayResults(data) {
                         </h6>
                         ${indexBadge}
                     </div>
-                    ${snippetHtml ? `<p class="small">${snippetHtml}</p>` : ''}
+                    ${snippetHtml ? `<div class="small snippet-group">${snippetHtml}</div>` : ''}
                     ${meta.length > 0 ? `<small class="text-muted d-block">
                         ${meta.map(m => {
                             if (m.includes('Uploaded')) return `<i class="bi bi-calendar3 me-1"></i>${m}`;

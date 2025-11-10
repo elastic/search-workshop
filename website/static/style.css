@@ -103,16 +103,28 @@ body {
 }
 
 .semantic-highlight {
-    background: rgba(129, 140, 248, 0.35);
-    padding: 2px 4px;
-    font-weight: 600;
-    border-radius: 3px;
-    box-shadow: 0 1px 2px rgba(30, 64, 175, 0.25);
+    background: none;
+    background-color: transparent;
+    padding: 0;
+    font-weight: 400;
+    color: #4f46e5;
+    text-decoration: none;
+    line-height: 1.2;
 }
 
 [data-bs-theme="dark"] .semantic-highlight {
-    background: rgba(99, 102, 241, 0.5);
-    color: inherit;
+    color: #a5b4fc;
+}
+
+.snippet-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+}
+
+.snippet-fragment {
+    margin: 0;
 }
 
 .match-legend {

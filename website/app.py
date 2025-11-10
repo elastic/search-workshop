@@ -807,21 +807,14 @@ def search_contracts(query: str, search_type: str, size: int = 20, filters: Opti
 def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Perform Keyword search on contracts index.
 
-    Only searches text fields: attachment.content, attachment.title, attachment.description,
-    attachment.format, and attachment.keywords.
+    Only searches the attachment.content field.
     """
     if query:
         query_clause = {
-            "multi_match": {
-                "query": query,
-                "fields": [
-                    "attachment.content^2",
-                    "attachment.title^1.5",
-                    "attachment.description",
-                    "attachment.format",
-                    "attachment.keywords"
-                ],
-                "type": "best_fields"
+            "match": {
+                "attachment.content": {
+                    "query": query
+                }
             }
         }
     else:
@@ -863,8 +856,7 @@ def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -
                 "attachment.content": {
                     "fragment_size": 150,
                     "number_of_fragments": 3
-                },
-                "attachment.title": {}
+                }
             }
         },
         "aggs": {
@@ -886,35 +878,12 @@ def keyword_search(query: str, size: int = 20, filters: Optional[Dict] = None) -
 
 
 def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
-    """Perform semantic search using semantic_content field with hybrid search for snippets.
-
-    Uses hybrid search combining semantic and text queries to get both:
-    - Semantic ranking from semantic_content field
-    - Text snippets from attachment.content and other text fields
-    """
+    """Perform semantic search using only the semantic_content field."""
     if query:
-        # Hybrid search: combine semantic and text queries
         query_clause = {
-            "bool": {
-                "should": [
-                    {
-                        "semantic": {
-                            "field": "semantic_content",
-                            "query": query
-                        }
-                    },
-                    {
-                        "multi_match": {
-                            "query": query,
-                            "fields": [
-                                "attachment.content",
-                                "attachment.title",
-                                "attachment.description"
-                            ],
-                            "type": "best_fields"
-                        }
-                    }
-                ]
+            "semantic": {
+                "field": "semantic_content",
+                "query": query
             }
         }
     else:
@@ -967,17 +936,22 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
         }
     }
 
-    # Add text field highlighting to get readable snippets
+    # Add highlighting for semantic and text fields to drive UI snippets
     if query:
         body["highlight"] = {
             "fields": {
+                "semantic_content": {
+                    "type": "semantic",
+                    "number_of_fragments": 3,
+                    "fragment_size": 20
+                },
                 "attachment.content": {
-                    "fragment_size": 150,
+                    "fragment_size": 20,
                     "number_of_fragments": 3
                 },
                 "attachment.title": {},
                 "attachment.description": {
-                    "fragment_size": 150,
+                    "fragment_size": 20,
                     "number_of_fragments": 2
                 }
             }
