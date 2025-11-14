@@ -113,37 +113,56 @@ body {
     line-height: 1.2;
 }
 
-.semantic-highlight.highlight-pulse {
-    animation: semanticPulse 1s ease-in-out;
-    transition: background-color 0.2s ease;
+.semantic-highlight.highlight-underline {
+    position: relative;
+    animation: semanticUnderline 1s ease-out;
 }
 
-@keyframes semanticPulse {
+.semantic-highlight.highlight-underline::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, #4f46e5, #818cf8, #4f46e5);
+    background-size: 200% 100%;
+    animation: underlineDraw 3s ease-out;
+}
+
+@keyframes semanticUnderline {
     0% {
-        background-color: rgba(79, 70, 229, 0.1);
+        transform: scale(1);
     }
     50% {
-        background-color: rgba(79, 70, 229, 0.2);
+        transform: scale(1.05);
     }
     100% {
-        background-color: rgba(79, 70, 229, 0.1);
+        transform: scale(1);
     }
 }
 
-@keyframes semanticPulseDark {
+@keyframes underlineDraw {
     0% {
-        background-color: rgba(165, 180, 252, 0.15);
+        width: 0;
+        opacity: 0;
     }
-    50% {
-        background-color: rgba(165, 180, 252, 0.25);
+    30% {
+        opacity: 1;
+    }
+    33.33% {
+        width: 100%;
+        opacity: 0.8;
     }
     100% {
-        background-color: rgba(165, 180, 252, 0.15);
+        width: 100%;
+        opacity: 0.8;
     }
 }
 
-[data-bs-theme="dark"] .semantic-highlight.highlight-pulse {
-    animation: semanticPulseDark 1s ease-in-out;
+[data-bs-theme="dark"] .semantic-highlight.highlight-underline::after {
+    background: linear-gradient(90deg, #a5b4fc, #c7d2fe, #a5b4fc);
+    background-size: 200% 100%;
 }
 
 [data-bs-theme="dark"] .semantic-highlight {

@@ -54,7 +54,7 @@ function applyQueryHighlight(text, query) {
         return text;
     }
 
-    const pattern = new RegExp(`(${terms.map(escapeForRegex).join('|')})`, 'gi');
+    const pattern = new RegExp(`\\b(${terms.map(escapeForRegex).join('|')})\\b`, 'gi');
     return text.replace(pattern, '<mark class="result-highlight">$1</mark>');
 }
 
@@ -199,7 +199,7 @@ function ensureQueryHighlight(text, queryTokens) {
     const container = document.createElement('div');
     container.innerHTML = text;
 
-    const tokenPattern = new RegExp(`(${queryTokens.map(escapeForRegex).join('|')})`, 'gi');
+    const tokenPattern = new RegExp(`\\b(${queryTokens.map(escapeForRegex).join('|')})\\b`, 'gi');
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
     const textNodes = [];
 
@@ -1989,17 +1989,17 @@ function highlightSemanticMatches() {
         return;
     }
     
-    // Add pulse class to all semantic highlights
+    // Add underline animation class to all semantic highlights
     semanticHighlights.forEach(element => {
-        element.classList.add('highlight-pulse');
+        element.classList.add('highlight-underline');
     });
     
-    // Remove the pulse class after animation completes (1s)
+    // Remove the underline class after animation completes (3s: 1s animation + 2s pause)
     setTimeout(() => {
         semanticHighlights.forEach(element => {
-            element.classList.remove('highlight-pulse');
+            element.classList.remove('highlight-underline');
         });
-    }, 1000);
+    }, 3000);
 }
 
 function escapeHtml(text) {
