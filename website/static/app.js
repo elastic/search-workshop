@@ -443,11 +443,21 @@ document.addEventListener('DOMContentLoaded', () => {
             modeButtons.forEach(b => {
                 b.classList.remove('active');
                 b.classList.remove('btn-primary');
-                b.classList.add('btn-outline-primary');
+                b.classList.add('btn-outline-secondary');
+                // Remove checkmark icon from all buttons
+                const icon = b.querySelector('.mode-btn-icon');
+                if (icon) icon.remove();
             });
             btn.classList.add('active');
-            btn.classList.remove('btn-outline-primary');
+            btn.classList.remove('btn-outline-secondary');
             btn.classList.add('btn-primary');
+            // Add checkmark icon to selected button
+            const btnText = btn.querySelector('.mode-btn-text');
+            if (btnText && !btn.querySelector('.mode-btn-icon')) {
+                const icon = document.createElement('i');
+                icon.className = 'bi bi-check-circle-fill mode-btn-icon';
+                btnText.insertAdjacentElement('afterend', icon);
+            }
             currentSearchMode = btn.dataset.mode;
 
             // Update URL and re-search if appropriate
@@ -455,7 +465,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // Don't auto-submit when switching to AI mode, but clear results and filters
             if (currentSearchMode === 'ai') {
                 clearResults();
-                hideFacets();
+                // Clear facets but keep sidebar visible (it contains search mode selector)
+                facetsContainer.innerHTML = '';
             } else if (currentQuery || currentSearchMode === 'keyword' || currentSearchMode === 'semantic') {
                 performSearch();
             }
@@ -1724,10 +1735,11 @@ function displayFacets(aggregations) {
 }
 
 function hideFacets() {
-    filterSidebar.style.display = 'none';
-    filterToggleMobile.style.display = 'none';
+    // Keep sidebar visible since it now contains the search mode selector
+    // Only hide if there are no facets and no search mode selector
     facetsContainer.innerHTML = '';
-    closeSidebar();
+    // Only hide sidebar if it's not needed (e.g., on reset when there's no search)
+    // For now, keep it visible so users can always access search mode
 }
 
 function openSidebar() {
@@ -1833,12 +1845,22 @@ function resetSearch() {
     modeButtons.forEach(btn => {
         if (btn.dataset.mode === 'keyword') {
             btn.classList.add('active');
-            btn.classList.remove('btn-outline-primary');
+            btn.classList.remove('btn-outline-secondary');
             btn.classList.add('btn-primary');
+            // Add checkmark icon to selected button
+            const btnText = btn.querySelector('.mode-btn-text');
+            if (btnText && !btn.querySelector('.mode-btn-icon')) {
+                const icon = document.createElement('i');
+                icon.className = 'bi bi-check-circle-fill mode-btn-icon';
+                btnText.insertAdjacentElement('afterend', icon);
+            }
         } else {
             btn.classList.remove('active');
             btn.classList.remove('btn-primary');
-            btn.classList.add('btn-outline-primary');
+            btn.classList.add('btn-outline-secondary');
+            // Remove checkmark icon from unselected buttons
+            const icon = btn.querySelector('.mode-btn-icon');
+            if (icon) icon.remove();
         }
     });
 
@@ -1922,13 +1944,23 @@ function restoreSearchFromURL() {
         // Update button states
         modeButtons.forEach(btn => {
             if (btn.dataset.mode === type) {
-                btn.classList.remove('btn-outline-primary');
+                btn.classList.remove('btn-outline-secondary');
                 btn.classList.add('btn-primary');
                 btn.classList.add('active');
+                // Add checkmark icon to selected button
+                const btnText = btn.querySelector('.mode-btn-text');
+                if (btnText && !btn.querySelector('.mode-btn-icon')) {
+                    const icon = document.createElement('i');
+                    icon.className = 'bi bi-check-circle-fill mode-btn-icon';
+                    btnText.insertAdjacentElement('afterend', icon);
+                }
             } else {
                 btn.classList.remove('active');
                 btn.classList.remove('btn-primary');
-                btn.classList.add('btn-outline-primary');
+                btn.classList.add('btn-outline-secondary');
+                // Remove checkmark icon from unselected buttons
+                const icon = btn.querySelector('.mode-btn-icon');
+                if (icon) icon.remove();
             }
         });
     }

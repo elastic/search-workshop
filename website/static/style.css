@@ -807,17 +807,20 @@ body,
 }
 
 /* Facets styling */
+.filter-section,
 #facetsContainer .filter-section {
     margin-bottom: 1.5rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid var(--color-border);
 }
 
+.filter-section:last-child,
 #facetsContainer .filter-section:last-child {
     border-bottom: none;
     margin-bottom: 0;
 }
 
+.filter-title,
 #facetsContainer .filter-title {
     font-size: 0.875rem;
     font-weight: 600;
@@ -825,6 +828,7 @@ body,
     color: var(--color-text);
 }
 
+.facet-btn,
 #facetsContainer .facet-btn {
     transition: all 0.2s ease;
     font-size: 0.95rem;
@@ -836,13 +840,53 @@ body,
     border: none;
 }
 
+.facet-btn:hover,
 #facetsContainer .facet-btn:hover {
     transform: translateX(2px);
 }
 
+.facet-btn:focus,
 #facetsContainer .facet-btn:focus {
     box-shadow: none;
     outline: none;
+}
+
+/* Search Mode button styling - clear background with color change for selected */
+.mode-btn {
+    background-color: transparent;
+    border-color: var(--color-border);
+    color: var(--color-muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.mode-btn:hover {
+    background-color: transparent;
+    border-color: var(--color-border);
+    color: var(--color-text);
+}
+
+.mode-btn.btn-primary,
+.mode-btn.active.btn-primary {
+    background-color: transparent;
+    border-color: var(--color-border);
+    color: #2463EB;
+    font-weight: 600;
+}
+
+.mode-btn.btn-primary:hover,
+.mode-btn.active.btn-primary:hover {
+    background-color: transparent;
+    border-color: var(--color-border);
+    color: #1d4ed8;
+}
+
+.mode-btn-icon {
+    margin-left: 0.5rem;
+    color: inherit;
+    font-size: 1em;
+    opacity: 0.9;
 }
 
 #facetsContainer .scrollable-filters {

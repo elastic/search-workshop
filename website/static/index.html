@@ -46,24 +46,7 @@
                 </span>
             </div>
             
-            <!-- Search Controls -->
-            <div class="d-flex justify-content-start align-items-end gap-4">
-                <div class="search-mode-selector">
-                    <label class="form-label fw-semibold mb-2 small d-block">Search Mode:</label>
-                    <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-primary mode-btn active" data-mode="keyword">Keyword</button>
-                        <button type="button" class="btn btn-outline-primary mode-btn" data-mode="semantic">Semantic</button>
-                        <button type="button" class="btn btn-outline-primary mode-btn" data-mode="ai">AI Agent</button>
-                    </div>
-                </div>
-                <!-- Index Selection - Hidden, using sidebar instead -->
-                <div class="d-none">
-                    <button type="button" class="btn btn-outline-primary index-btn active" data-index="all">All Indices</button>
-                    <button type="button" class="btn btn-outline-primary index-btn" data-index="flights">Flights</button>
-                    <button type="button" class="btn btn-outline-primary index-btn" data-index="airlines">Airlines</button>
-                    <button type="button" class="btn btn-outline-primary index-btn" data-index="contracts">Contracts</button>
-                </div>
-            </div>
+            <!-- Search Controls - Removed, now in sidebar -->
         </div>
         
         <!-- Error Message -->
@@ -72,18 +55,21 @@
         <!-- Sidebar and Results Layout -->
         <div class="results-layout">
             <!-- Filter Sidebar -->
-            <aside id="filterSidebar" class="filter-sidebar" style="display: none;">
-                <div class="sidebar-header">
-                    <h6 class="mb-0"><i class="bi bi-funnel-fill me-2"></i>Filter Results</h6>
-                    <button id="sidebarToggle" class="btn btn-sm btn-link text-muted d-lg-none" type="button">
-                        <i class="bi bi-x-lg"></i>
-                    </button>
+            <aside id="filterSidebar" class="filter-sidebar">
+                <div class="sidebar-content">
+                    <!-- Search Mode Selector -->
+                    <div class="filter-section">
+                        <div class="filter-title"><i class="bi bi-search me-2"></i>Search Mode</div>
+                        <button type="button" class="btn btn-sm btn-primary mode-btn active facet-btn" data-mode="keyword"><span class="mode-btn-text">Keyword</span> <i class="bi bi-check-circle-fill mode-btn-icon"></i></button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mode-btn facet-btn" data-mode="semantic"><span class="mode-btn-text">Semantic</span></button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary mode-btn facet-btn" data-mode="ai"><span class="mode-btn-text">AI Agent</span></button>
+                    </div>
+                    <div id="facetsContainer"></div>
                 </div>
-                <div id="facetsContainer" class="sidebar-content"></div>
             </aside>
 
             <!-- Toggle button for mobile -->
-            <button id="filterToggleMobile" class="btn btn-outline-primary btn-sm mb-3 d-lg-none" style="display: none;">
+            <button id="filterToggleMobile" class="btn btn-outline-primary btn-sm mb-3 d-lg-none">
                 <i class="bi bi-funnel-fill me-1"></i> Show Filters
             </button>
 
