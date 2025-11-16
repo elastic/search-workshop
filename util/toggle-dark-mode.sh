@@ -2,7 +2,7 @@
 set -euo pipefail
 
 KIBANA_URL="${KIBANA_URL:-http://localhost:5601}"
-VERSION="${KIBANA_VERSION:-9.2.0}"
+VERSION="${KIBANA_VERSION:-9.2.1}"
 AUTH="${KIBANA_AUTH:-elastic:elastic}"
 
 # Read current value (default to "false" if missing/null)

@@ -105,11 +105,11 @@ KIBANA_URL_LOCAL="localhost"
 LLM_PROXY_URL=$(cat /tmp/instruqt_env.txt | grep SA_LLM_PROXY_URL | cut -d= -f 2)
 LLM_APIKEY=$(cat /tmp/instruqt_env.txt | grep SA_LLM_PROXY_BEARER_TOKEN | cut -d= -f 2-)
 echo LLM_APIKEY=$LLM_APIKEY
-ELASTICSEARCH_VERSION=9.2.0
+ELASTICSEARCH_VERSION=9.2.1
 KIBANA_URL_LOCAL=http://localhost:5601
 
 # Get Elastic Stack Version from Ansible template variable
-ELASTIC_STACK_VERSION=9.2.0
+ELASTIC_STACK_VERSION=9.2.1
 
 model=gpt-4o
 connector=true
