@@ -60,10 +60,24 @@
                     <!-- Search Mode Selector -->
                     <div class="filter-section">
                         <div class="filter-title"><i class="bi bi-search me-2"></i>Search Mode</div>
-                        <button type="button" class="btn btn-sm btn-primary mode-btn active facet-btn" data-mode="keyword"><span class="mode-btn-text">Keyword</span> <i class="bi bi-check-circle-fill mode-btn-icon"></i></button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary mode-btn facet-btn" data-mode="semantic"><span class="mode-btn-text">Semantic</span></button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary mode-btn facet-btn" data-mode="ai"><span class="mode-btn-text">AI Agent</span></button>
+                        <div class="btn-group segmented-control" role="group" aria-label="Search mode selection">
+                            <input type="radio" class="btn-check" name="searchMode" id="mode-keyword" value="keyword" checked>
+                            <label class="btn btn-outline-secondary mode-btn" for="mode-keyword" data-mode="keyword">
+                                <span class="mode-btn-text">Keyword</span>
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="searchMode" id="mode-semantic" value="semantic">
+                            <label class="btn btn-outline-secondary mode-btn" for="mode-semantic" data-mode="semantic">
+                                <span class="mode-btn-text">Semantic</span>
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="searchMode" id="mode-ai" value="ai">
+                            <label class="btn btn-outline-secondary mode-btn" for="mode-ai" data-mode="ai">
+                                <span class="mode-btn-text">AI Agent</span>
+                            </label>
+                        </div>
                     </div>
+                    <div id="conversationSidebar" class="conversation-sidebar" style="display: none;"></div>
                     <div id="facetsContainer"></div>
                 </div>
             </aside>

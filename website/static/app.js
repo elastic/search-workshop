@@ -4,6 +4,7 @@ let currentQuery = '';
 let currentIndex = 'all';
 let searchTimeout = null;
 let currentFilters = {}; // Active filters for flights
+let currentConversationId = null; // Current conversation ID for AI mode
 
 // DOM Elements
 const searchInput = document.getElementById('searchInput');
@@ -14,6 +15,7 @@ const loadingIndicator = document.getElementById('loadingIndicator');
 const errorMessage = document.getElementById('errorMessage');
 const resultsContainer = document.getElementById('resultsContainer');
 const facetsContainer = document.getElementById('facetsContainer');
+let conversationSidebar = document.getElementById('conversationSidebar');
 const filterSidebar = document.getElementById('filterSidebar');
 const filterToggleMobile = document.getElementById('filterToggleMobile');
 const sidebarToggle = document.getElementById('sidebarToggle');
@@ -393,14 +395,12 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const query = searchInput.value.trim();
         
-        // If input is cleared, show default results (10 documents)
+        // If input is cleared, show welcome message
         if (!query) {
             currentQuery = '';
             updateURL();
-            // Load default results
-            searchTimeout = setTimeout(() => {
-                performSearch();
-            }, 300);
+            clearResults();
+            displayWelcomeMessage();
             return;
         }
         
@@ -425,50 +425,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Set initial active button states
-    const activeModeBtn = document.querySelector('.mode-btn.active');
-    if (activeModeBtn) {
-        activeModeBtn.classList.remove('btn-outline-primary');
-        activeModeBtn.classList.add('btn-primary');
-    }
-    
     const activeIndexBtn = document.querySelector('.index-btn.active');
     if (activeIndexBtn) {
         activeIndexBtn.classList.remove('btn-outline-primary');
         activeIndexBtn.classList.add('btn-primary');
     }
     
-    // Mode toggle
-    modeButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            modeButtons.forEach(b => {
-                b.classList.remove('active');
-                b.classList.remove('btn-primary');
-                b.classList.add('btn-outline-secondary');
-                // Remove checkmark icon from all buttons
-                const icon = b.querySelector('.mode-btn-icon');
-                if (icon) icon.remove();
-            });
-            btn.classList.add('active');
-            btn.classList.remove('btn-outline-secondary');
-            btn.classList.add('btn-primary');
-            // Add checkmark icon to selected button
-            const btnText = btn.querySelector('.mode-btn-text');
-            if (btnText && !btn.querySelector('.mode-btn-icon')) {
-                const icon = document.createElement('i');
-                icon.className = 'bi bi-check-circle-fill mode-btn-icon';
-                btnText.insertAdjacentElement('afterend', icon);
-            }
-            currentSearchMode = btn.dataset.mode;
+    // Mode toggle - listen to radio button changes
+    const modeRadioInputs = document.querySelectorAll('input[name="searchMode"]');
+    modeRadioInputs.forEach(radio => {
+        radio.addEventListener('change', () => {
+            if (radio.checked) {
+                const label = document.querySelector(`label[for="${radio.id}"]`);
+                currentSearchMode = label ? label.dataset.mode : radio.value;
 
-            // Update URL and re-search if appropriate
-            updateURL();
-            // Don't auto-submit when switching to AI mode, but clear results and filters
-            if (currentSearchMode === 'ai') {
-                clearResults();
-                // Clear facets but keep sidebar visible (it contains search mode selector)
-                facetsContainer.innerHTML = '';
-            } else if (currentQuery || currentSearchMode === 'keyword' || currentSearchMode === 'semantic') {
-                performSearch();
+                // Update URL and re-search if appropriate
+                updateURL();
+                // Don't auto-submit when switching to AI mode, but clear results and filters
+                if (currentSearchMode === 'ai') {
+                    clearResults();
+                    // Clear facets but keep sidebar visible (it contains search mode selector)
+                    facetsContainer.innerHTML = '';
+                    // Display index selector and conversation history
+                    ensureConversationSidebar({ forceIndex: true, refresh: true });
+                    // Clear conversation ID when switching to AI mode (unless already set from URL)
+                    if (!currentConversationId) {
+                        updateURL();
+                    }
+                } else if (currentQuery || currentSearchMode === 'keyword' || currentSearchMode === 'semantic') {
+                    // Clear conversation ID when switching away from AI mode
+                    currentConversationId = null;
+                    updateURL();
+                    performSearch();
+                    ensureConversationSidebar();
+                }
             }
         });
     });
@@ -536,7 +526,7 @@ async function performRegularSearch(query) {
         }
         
         const data = await response.json();
-        displayResults(data);
+        await displayResults(data);
     } catch (error) {
         showError(error.message);
     } finally {
@@ -546,10 +536,17 @@ async function performRegularSearch(query) {
 
 async function performStreamingSearch(query) {
     try {
+        await ensureConversationSidebar();
+
         const requestBody = {
             query: query,
             filters: Object.keys(currentFilters).length > 0 ? currentFilters : {}
         };
+        
+        // Include conversation_id if present
+        if (currentConversationId) {
+            requestBody.conversation_id = currentConversationId;
+        }
 
         const response = await fetch('/api/search/stream', {
             method: 'POST',
@@ -563,6 +560,7 @@ async function performStreamingSearch(query) {
         }
 
         await displayAIResults(response, query);
+        await ensureConversationSidebar({ refresh: true });
     } catch (error) {
         showError(error.message);
     } finally {
@@ -766,8 +764,11 @@ function renderAIStream(data, context) {
 
     // Handle events from async_events.txt documentation
     if (kind === 'conversation_id_set') {
-        // Silently store conversation ID, don't display
-        context.conversationId = eventData.conversation_id;
+        // Store conversation ID and update URL
+        const conversationId = eventData.conversation_id;
+        context.conversationId = conversationId;
+        currentConversationId = conversationId;
+        updateURL();
     } else if (kind === 'reasoning') {
         // Display AI's reasoning/thinking
         const reasoning = eventData.reasoning || '';
@@ -884,6 +885,7 @@ function renderAIStream(data, context) {
             conversationTitleEl.style.display = 'block';
         }
         appendInfoEvent('💬 Conversation Created', `"${title}"`);
+        ensureConversationSidebar({ refresh: true });
     } else if (kind === 'conversation_updated') {
         // Conversation was updated
         const title = eventData.title || 'Untitled';
@@ -892,6 +894,7 @@ function renderAIStream(data, context) {
             conversationTitleEl.style.display = 'block';
         }
         appendInfoEvent('💬 Conversation Updated', `"${title}"`);
+        ensureConversationSidebar({ refresh: true });
     } else if (['tool_code', 'tool_start'].includes(kind)) {
         appendToolEvent(data.tool_name ? `Running ${data.tool_name}` : 'Tool Code', data.code || chunkText);
         statusBadgeEl.textContent = 'Calling tool…';
@@ -951,7 +954,7 @@ function renderAIStream(data, context) {
     }, 0);
 }
 
-function displayResults(data) {
+async function displayResults(data) {
     if (!data.hits || !data.hits.hits || data.hits.hits.length === 0) {
         resultsContainer.innerHTML = `
             <div class="text-center py-5">
@@ -1425,8 +1428,9 @@ function displayResults(data) {
     resultsContainer.innerHTML = html;
 
     // Always display sidebar with index selector and facets
-    displayFacets(data.aggregations);
-    
+    // (displayFacets will also display conversation history if in AI mode)
+    await displayFacets(data.aggregations);
+
     // Add click handler for semantic legend item
     const semanticLegendItem = document.getElementById('semantic-legend-item');
     if (semanticLegendItem) {
@@ -1434,7 +1438,7 @@ function displayResults(data) {
     }
 }
 
-function displayFacets(aggregations) {
+async function displayFacets(aggregations) {
     // Always show sidebar with at least index selector
     let facetsHtml = '';
 
@@ -1483,40 +1487,46 @@ function displayFacets(aggregations) {
         facetsHtml += '</div>';
     }
 
-    // Index selector (always visible)
-    facetsHtml += '<div class="filter-section">';
-    facetsHtml += '<div class="filter-title"><i class="bi bi-collection me-2"></i>Index</div>';
+    // Index selector (hide when type=ai is in URL or currentSearchMode is 'ai')
+    const params = new URLSearchParams(window.location.search);
+    const urlType = params.get('type');
+    const isAiMode = currentSearchMode === 'ai' || urlType === 'ai';
+    
+    if (!isAiMode) {
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-collection me-2"></i>Index</div>';
 
-    // Define all indices
-    const indices = [
-        { key: 'all', label: 'All Indices' },
-        { key: 'flights', label: 'Flights' },
-        { key: 'airlines', label: 'Airlines' },
-        { key: 'contracts', label: 'Contracts' }
-    ];
+        // Define all indices
+        const indices = [
+            { key: 'all', label: 'All Indices' },
+            { key: 'flights', label: 'Flights' },
+            { key: 'airlines', label: 'Airlines' },
+            { key: 'contracts', label: 'Contracts' }
+        ];
 
-    indices.forEach(index => {
-        const isActive = currentIndex === index.key;
-        const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+        indices.forEach(index => {
+            const isActive = currentIndex === index.key;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
 
-        // Show counts if we're on "all" and have aggregations
-        let countDisplay = '';
-        if (currentIndex === 'all' && aggregations.record_types && aggregations.record_types.buckets) {
-            const bucket = aggregations.record_types.buckets.find(b => b.key === index.key);
-            if (bucket && bucket.doc_count > 0) {
-                countDisplay = ` <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>`;
+            // Show counts if we're on "all" and have aggregations
+            let countDisplay = '';
+            if (currentIndex === 'all' && aggregations.record_types && aggregations.record_types.buckets) {
+                const bucket = aggregations.record_types.buckets.find(b => b.key === index.key);
+                if (bucket && bucket.doc_count > 0) {
+                    countDisplay = ` <span style="font-size: 0.85em; font-weight: normal;">(${bucket.doc_count.toLocaleString()})</span>`;
+                }
             }
-        }
 
-        facetsHtml += `
-            <button class="btn btn-sm ${activeClass} facet-btn index-switch-btn"
-                    data-index="${escapeHtml(index.key)}">
-                ${index.label}${countDisplay}
-            </button>
-        `;
-    });
+            facetsHtml += `
+                <button class="btn btn-sm ${activeClass} facet-btn index-switch-btn"
+                        data-index="${escapeHtml(index.key)}">
+                    ${index.label}${countDisplay}
+                </button>
+            `;
+        });
 
-    facetsHtml += '</div>';
+        facetsHtml += '</div>';
+    }
 
     // Flights-specific facets
     if (currentIndex === 'flights') {
@@ -1732,6 +1742,435 @@ function displayFacets(aggregations) {
             switchToIndex(newIndex);
         });
     });
+
+}
+
+async function loadConversations() {
+    try {
+        const response = await fetch('/api/conversations');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        console.log('Conversations API response:', data);
+        return collectConversationRecords(data);
+    } catch (error) {
+        console.error('Error loading conversations:', error);
+        return [];
+    }
+}
+
+function hasConversationFields(record) {
+    if (!record || typeof record !== 'object') {
+        return false;
+    }
+
+    const candidate = record.conversation && typeof record.conversation === 'object'
+        ? record.conversation
+        : record;
+
+    return Boolean(
+        candidate.conversation_id ||
+        candidate.conversationId ||
+        candidate.id ||
+        (candidate.metadata && (candidate.metadata.conversation_id || candidate.metadata.conversationId)) ||
+        candidate.title ||
+        candidate.name
+    );
+}
+
+function collectConversationRecords(payload) {
+    const results = [];
+    const visited = new WeakSet();
+    const seen = new Set();
+
+    function walk(node) {
+        if (!node || typeof node !== 'object') {
+            return;
+        }
+        if (visited.has(node)) {
+            return;
+        }
+        visited.add(node);
+
+        if (Array.isArray(node)) {
+            node.forEach(item => walk(item));
+            return;
+        }
+
+        if (hasConversationFields(node)) {
+            const normalized = normalizeConversationRecord(node);
+            const key = normalized.conversation_id || normalized.title || JSON.stringify(normalized);
+            if (!seen.has(key)) {
+                seen.add(key);
+                results.push(normalized);
+            }
+        }
+
+        Object.values(node).forEach(value => {
+            if (value && typeof value === 'object') {
+                walk(value);
+            }
+        });
+    }
+
+    walk(payload);
+    return results;
+}
+
+async function displayIndexSelector() {
+    // Display just the index selector for the homepage
+    let facetsHtml = '';
+
+    // Index selector (hide when type=ai is in URL or currentSearchMode is 'ai')
+    const params = new URLSearchParams(window.location.search);
+    const urlType = params.get('type');
+    const isAiMode = currentSearchMode === 'ai' || urlType === 'ai';
+    
+    if (!isAiMode) {
+        facetsHtml += '<div class="filter-section">';
+        facetsHtml += '<div class="filter-title"><i class="bi bi-collection me-2"></i>Index</div>';
+
+        // Define all indices
+        const indices = [
+            { key: 'all', label: 'All Indices' },
+            { key: 'flights', label: 'Flights' },
+            { key: 'airlines', label: 'Airlines' },
+            { key: 'contracts', label: 'Contracts' }
+        ];
+
+        indices.forEach(index => {
+            const isActive = currentIndex === index.key;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+
+            facetsHtml += `
+                <button class="btn btn-sm ${activeClass} facet-btn index-switch-btn"
+                        data-index="${escapeHtml(index.key)}">
+                    ${index.label}
+                </button>
+            `;
+        });
+
+        facetsHtml += '</div>';
+    }
+
+    facetsContainer.innerHTML = facetsHtml;
+
+    // Show sidebar
+    if (filterSidebar.style.display !== 'block') {
+        filterSidebar.style.display = 'block';
+        if (filterToggleMobile) {
+            filterToggleMobile.style.display = 'block';
+        }
+    }
+
+    // Attach event listeners to index switch buttons
+    facetsContainer.querySelectorAll('.index-switch-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const newIndex = this.dataset.index;
+            switchToIndex(newIndex);
+        });
+    });
+
+}
+
+async function displayConversationHistory() {
+    console.log('displayConversationHistory called, currentSearchMode:', currentSearchMode);
+    const sidebar = getOrCreateConversationSidebar();
+    if (!sidebar) return;
+
+    const conversations = await loadConversations();
+    console.log('Loaded conversations:', conversations);
+    
+    let conversationsHtml = '<div class="filter-section conversations-section">';
+    conversationsHtml += '<div class="filter-title"><i class="bi bi-chat-left-text me-2"></i>Conversations</div>';
+    
+    // Add "New Conversation" button (always show)
+    conversationsHtml += `
+        <button class="btn btn-sm btn-primary facet-btn new-conversation-btn" id="newConversationBtn">
+            <i class="bi bi-plus-circle me-1"></i> New Conversation
+        </button>
+    `;
+    
+    if (conversations.length > 0) {
+        conversations.forEach(conv => {
+            const record = normalizeConversationRecord(conv);
+            const title = record.title || 'Untitled Conversation';
+            const id = record.conversation_id || '';
+            const date = record.updated_at || record.created_at || '';
+            let dateStr = '';
+            if (date) {
+                try {
+                    const dateObj = new Date(date);
+                    dateStr = dateObj.toLocaleDateString();
+                } catch (e) {
+                    dateStr = '';
+                }
+            }
+            
+            const isActive = currentConversationId && id && currentConversationId === id;
+            const activeClass = isActive ? 'btn-primary' : 'btn-outline-secondary';
+            
+            conversationsHtml += `
+                <div class="conversation-row" data-conversation-id="${escapeHtml(id)}">
+                    <button class="btn btn-sm ${activeClass} facet-btn conversation-btn"
+                            data-conversation-id="${escapeHtml(id)}"
+                            title="${escapeHtml(title)}">
+                        <div class="conversation-item">
+                            <div class="conversation-title">${escapeHtml(title)}</div>
+                            <div class="conversation-date">
+                                <span class="conversation-delete-link"
+                                      role="button"
+                                      tabindex="0"
+                                      data-conversation-id="${escapeHtml(id)}">
+                                    Delete
+                                </span>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            `;
+        });
+    } else {
+        conversationsHtml += '<div class="text-muted small mt-2" style="text-align: center; padding: 0.5rem;">No previous conversations</div>';
+    }
+    
+    conversationsHtml += '</div>';
+
+    sidebar.innerHTML = conversationsHtml;
+    sidebar.style.display = 'block';
+    
+    // Attach event listener to "New Conversation" button
+    const newConversationBtn = sidebar.querySelector('#newConversationBtn');
+    if (newConversationBtn) {
+        newConversationBtn.addEventListener('click', createNewConversation);
+    }
+    
+    // Attach event listeners to conversation buttons
+    sidebar.querySelectorAll('.conversation-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            sidebar.querySelectorAll('.conversation-btn').forEach(button => {
+                button.classList.remove('btn-primary');
+                button.classList.add('btn-outline-secondary');
+            });
+
+            this.classList.remove('btn-outline-secondary');
+            this.classList.add('btn-primary');
+
+            const conversationId = this.dataset.conversationId;
+            loadConversation(conversationId);
+        });
+    });
+
+    // Attach event listeners to delete links
+    sidebar.querySelectorAll('.conversation-delete-link').forEach(link => {
+        link.addEventListener('click', function(event) {
+            event.stopPropagation();
+            event.preventDefault();
+            const conversationId = this.dataset.conversationId;
+            handleConversationDelete(conversationId);
+        });
+        link.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                const conversationId = this.dataset.conversationId;
+                handleConversationDelete(conversationId);
+            }
+        });
+    });
+}
+
+async function ensureConversationSidebar(options = {}) {
+    const { refresh = false, forceIndex = false } = options;
+
+    if (!facetsContainer) {
+        return;
+    }
+
+    if (currentSearchMode !== 'ai') {
+        const sidebar = conversationSidebar || document.getElementById('conversationSidebar');
+        if (sidebar) {
+            sidebar.innerHTML = '';
+            sidebar.style.display = 'none';
+            delete sidebar.dataset.loaded;
+        }
+        return;
+    }
+
+    const sidebar = getOrCreateConversationSidebar();
+    if (!sidebar) {
+        return;
+    }
+
+    const hasIndexSelector = facetsContainer.querySelector('.index-switch-btn');
+    if (!hasIndexSelector || forceIndex) {
+        await displayIndexSelector();
+    }
+
+    const needsConversations = refresh ||
+        !sidebar.dataset.loaded ||
+        sidebar.innerHTML.trim() === '';
+
+    if (needsConversations) {
+        await displayConversationHistory();
+        sidebar.dataset.loaded = 'true';
+        sidebar.style.display = 'block';
+    }
+}
+
+function getOrCreateConversationSidebar() {
+    if (conversationSidebar && conversationSidebar instanceof HTMLElement) {
+        return conversationSidebar;
+    }
+
+    const container = document.createElement('div');
+    container.id = 'conversationSidebar';
+    container.className = 'conversation-sidebar';
+    container.style.display = 'none';
+
+    const sidebarContent = filterSidebar ? filterSidebar.querySelector('.sidebar-content') : null;
+    if (sidebarContent) {
+        sidebarContent.insertBefore(container, facetsContainer || null);
+    } else if (facetsContainer && facetsContainer.parentNode) {
+        facetsContainer.parentNode.insertBefore(container, facetsContainer);
+    } else {
+        console.error('Unable to insert conversation sidebar - container not found');
+        return null;
+    }
+
+    conversationSidebar = container;
+    return container;
+}
+
+function normalizeConversationRecord(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return {};
+    }
+
+    const record = raw.conversation && typeof raw.conversation === 'object'
+        ? raw.conversation
+        : raw;
+
+    const metadata = record.metadata && typeof record.metadata === 'object'
+        ? record.metadata
+        : {};
+
+    return {
+        ...record,
+        conversation_id: record.conversation_id ||
+            record.conversationId ||
+            metadata.conversation_id ||
+            metadata.conversationId ||
+            record.id ||
+            metadata.id ||
+            '',
+        title: record.title ||
+            record.name ||
+            metadata.title ||
+            metadata.name ||
+            '',
+        created_at: record.created_at ||
+            record.createdAt ||
+            metadata.created_at ||
+            metadata.createdAt ||
+            '',
+        updated_at: record.updated_at ||
+            record.updatedAt ||
+            metadata.updated_at ||
+            metadata.updatedAt ||
+            ''
+    };
+}
+
+
+function createNewConversation() {
+    // Clear conversation ID
+    currentConversationId = null;
+    
+    // Clear search input and results
+    searchInput.value = '';
+    currentQuery = '';
+    clearResults();
+    
+    // Update URL (removes conversation_id)
+    updateURL();
+    
+    // Focus on search input
+    searchInput.focus();
+
+    ensureConversationSidebar({ refresh: true });
+}
+
+async function handleConversationDelete(conversationId) {
+    if (!conversationId) {
+        return;
+    }
+
+    const confirmed = window.confirm('Delete this conversation?');
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            let errorMessage = 'Failed to delete conversation';
+            try {
+                const data = await response.json();
+                if (data && data.error) {
+                    errorMessage = data.error;
+                }
+            } catch (err) {
+                // ignore json parse errors
+            }
+            throw new Error(errorMessage);
+        }
+
+        if (currentConversationId === conversationId) {
+            currentConversationId = null;
+            updateURL();
+            clearResults();
+        }
+
+        await ensureConversationSidebar({ refresh: true });
+    } catch (error) {
+        console.error('Error deleting conversation:', error);
+        showError(error.message || 'Failed to delete conversation');
+        setTimeout(() => {
+            hideError();
+        }, 4000);
+    }
+}
+
+async function loadConversation(conversationId) {
+    // Switch to AI mode if not already
+    if (currentSearchMode !== 'ai') {
+        const aiModeRadio = document.getElementById('mode-ai');
+        if (aiModeRadio) {
+            aiModeRadio.checked = true;
+            aiModeRadio.dispatchEvent(new Event('change'));
+        }
+    }
+    
+    // Set current conversation ID
+    currentConversationId = conversationId;
+    
+    // Clear search input and results
+    searchInput.value = '';
+    currentQuery = '';
+    clearResults();
+    
+    // Update URL with conversation ID
+    updateURL();
+    
+    // Focus on search input
+    searchInput.focus();
+    
+    // TODO: Load conversation messages and display them
+    // For now, the conversation will be loaded when user sends a message
 }
 
 function hideFacets() {
@@ -1811,6 +2250,62 @@ function clearResults() {
     resultsContainer.innerHTML = '';
 }
 
+function displayWelcomeMessage() {
+    resultsContainer.innerHTML = `
+        <div class="welcome-message">
+            <div class="welcome-header">
+                <p class="welcome-subtitle">I can help answers questions about:</p>
+            </div>
+            <div class="welcome-content">
+                <div class="welcome-card" data-index="flights" role="button" tabindex="0">
+                    <div class="welcome-icon">
+                        <i class="bi bi-airplane-engines"></i>
+                    </div>
+                    <div class="welcome-card-content">
+                        <h3 class="welcome-card-title">US Domestic Flights</h3>
+                        <p class="welcome-card-text">Flight schedules, delays, cancellations, and statistics from 2019 to 2025</p>
+                    </div>
+                </div>
+                <div class="welcome-card" data-index="airlines" role="button" tabindex="0">
+                    <div class="welcome-icon">
+                        <i class="bi bi-building"></i>
+                    </div>
+                    <div class="welcome-card-content">
+                        <h3 class="welcome-card-title">Major US Airlines</h3>
+                        <p class="welcome-card-text">Information about United, American, Delta, and Southwest</p>
+                    </div>
+                </div>
+                <div class="welcome-card" data-index="contracts" role="button" tabindex="0">
+                    <div class="welcome-icon">
+                        <i class="bi bi-file-earmark-text"></i>
+                    </div>
+                    <div class="welcome-card-content">
+                        <h3 class="welcome-card-title">Contracts of Carriage</h3>
+                        <p class="welcome-card-text">Policies, rules, baggage fees, and travel terms for each airline</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    // Display index selector in sidebar
+    displayIndexSelector();
+    
+    // Add click handlers to welcome cards
+    document.querySelectorAll('.welcome-card[data-index]').forEach(card => {
+        const index = card.dataset.index;
+        const handleClick = () => {
+            switchToIndex(index);
+        };
+        card.addEventListener('click', handleClick);
+        card.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleClick();
+            }
+        });
+    });
+}
+
 function showLoading() {
     if (!loadingIndicator) return;
     loadingIndicator.style.display = 'flex';
@@ -1842,27 +2337,10 @@ function resetSearch() {
 
     // Reset to default search mode (Keyword)
     currentSearchMode = 'keyword';
-    modeButtons.forEach(btn => {
-        if (btn.dataset.mode === 'keyword') {
-            btn.classList.add('active');
-            btn.classList.remove('btn-outline-secondary');
-            btn.classList.add('btn-primary');
-            // Add checkmark icon to selected button
-            const btnText = btn.querySelector('.mode-btn-text');
-            if (btnText && !btn.querySelector('.mode-btn-icon')) {
-                const icon = document.createElement('i');
-                icon.className = 'bi bi-check-circle-fill mode-btn-icon';
-                btnText.insertAdjacentElement('afterend', icon);
-            }
-        } else {
-            btn.classList.remove('active');
-            btn.classList.remove('btn-primary');
-            btn.classList.add('btn-outline-secondary');
-            // Remove checkmark icon from unselected buttons
-            const icon = btn.querySelector('.mode-btn-icon');
-            if (icon) icon.remove();
-        }
-    });
+    const keywordRadio = document.getElementById('mode-keyword');
+    if (keywordRadio) {
+        keywordRadio.checked = true;
+    }
 
     // Reset to default index (all)
     currentIndex = 'all';
@@ -1878,24 +2356,22 @@ function resetSearch() {
         }
     });
 
-    // Clear results
+    // Clear conversation ID
+    currentConversationId = null;
+
+    // Clear results and show welcome message
     clearResults();
+    displayWelcomeMessage();
 
     // Hide loading and error messages
     hideLoading();
     hideError();
-
-    // Hide sidebar
-    hideFacets();
 
     // Update URL (clears all parameters)
     updateURL();
 
     // Focus back on search input
     searchInput.focus();
-
-    // Reload default results so the page isn't empty
-    performSearch();
 }
 
 function updateURL() {
@@ -1909,6 +2385,11 @@ function updateURL() {
     }
     if (currentIndex) {
         params.set('index', currentIndex);
+    }
+    
+    // Add conversation ID if present (for AI mode)
+    if (currentConversationId) {
+        params.set('conversation_id', currentConversationId);
     }
 
     // Add filters to URL
@@ -1937,32 +2418,16 @@ function restoreSearchFromURL() {
     const query = params.get('q');
     const type = params.get('type');
     const index = params.get('index');
+    const conversationId = params.get('conversation_id');
 
     // Restore search mode (even if no query)
     if (type && ['keyword', 'semantic', 'ai'].includes(type)) {
         currentSearchMode = type;
-        // Update button states
-        modeButtons.forEach(btn => {
-            if (btn.dataset.mode === type) {
-                btn.classList.remove('btn-outline-secondary');
-                btn.classList.add('btn-primary');
-                btn.classList.add('active');
-                // Add checkmark icon to selected button
-                const btnText = btn.querySelector('.mode-btn-text');
-                if (btnText && !btn.querySelector('.mode-btn-icon')) {
-                    const icon = document.createElement('i');
-                    icon.className = 'bi bi-check-circle-fill mode-btn-icon';
-                    btnText.insertAdjacentElement('afterend', icon);
-                }
-            } else {
-                btn.classList.remove('active');
-                btn.classList.remove('btn-primary');
-                btn.classList.add('btn-outline-secondary');
-                // Remove checkmark icon from unselected buttons
-                const icon = btn.querySelector('.mode-btn-icon');
-                if (icon) icon.remove();
-            }
-        });
+        // Update radio button state
+        const modeRadio = document.getElementById(`mode-${type}`);
+        if (modeRadio) {
+            modeRadio.checked = true;
+        }
     }
 
     // Restore index selection (even if no query)
@@ -1982,6 +2447,11 @@ function restoreSearchFromURL() {
         });
     }
 
+    // Restore conversation ID from URL
+    if (conversationId) {
+        currentConversationId = conversationId;
+    }
+
     // Restore filters from URL
     currentFilters = {};
     const filterKeys = ['cancelled', 'diverted', 'airline', 'origin', 'dest', 'flight_date', 'airline_code', 'author', 'upload_year'];
@@ -1999,6 +2469,10 @@ function restoreSearchFromURL() {
         }
     });
 
+    if (currentSearchMode === 'ai') {
+        ensureConversationSidebar();
+    }
+
     if (query) {
         // Restore search input
         searchInput.value = query;
@@ -2007,9 +2481,11 @@ function restoreSearchFromURL() {
         // Perform the search
         performSearch();
     } else {
-        // If there's no query, load default results (10 documents)
+        // If there's no query, show welcome message or index selector
         currentQuery = '';
-        performSearch();
+        if (currentSearchMode !== 'ai') {
+            displayWelcomeMessage();
+        }
     }
 }
 
