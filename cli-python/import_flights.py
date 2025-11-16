@@ -14,7 +14,9 @@ import io
 import json
 import logging
 import os
+import shlex
 import ssl
+import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass
@@ -181,10 +183,12 @@ class ElasticsearchClient:
         raise RuntimeError(f"Index creation failed ({status}): {body.decode('utf-8', 'ignore')}")
 
     def bulk(self, index: str, payload: bytes, refresh: bool) -> Dict[str, object]:
+        # When _index is specified in action lines, use global _bulk endpoint
+        # The index parameter is kept for backward compatibility but ignored when _index is in payload
         params = {"refresh": "true" if refresh else "false"}
         status, body, _ = self._request(
             "POST",
-            f"/{index}/_bulk",
+            "/_bulk",
             body=payload,
             headers={"Content-Type": "application/x-ndjson"},
             params=params,
@@ -318,6 +322,40 @@ class AirportLookup:
             self._logger.warning("Failed to load airports file: %s", exc)
 
 
+class CancellationLookup:
+    def __init__(self, cancellations_file: Optional[Path], logger: logging.Logger):
+        self._logger = logger
+        self._cancellations: Dict[str, str] = {}
+        if cancellations_file and cancellations_file.exists():
+            self._load_cancellations(cancellations_file)
+
+    def lookup_reason(self, code: Optional[str]) -> Optional[str]:
+        if not code:
+            return None
+
+        return self._cancellations.get(code.upper())
+
+    def _load_cancellations(self, file_path: Path) -> None:
+        self._logger.info("Loading cancellations from %s", file_path)
+        count = 0
+
+        try:
+            with file_path.open("r", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    code = row.get("Code", "").strip()
+                    description = row.get("Description", "").strip()
+                    if not code or not description:
+                        continue
+
+                    self._cancellations[code.upper()] = description
+                    count += 1
+
+            self._logger.info("Loaded %s cancellation reasons into lookup table", count)
+        except Exception as exc:
+            self._logger.warning("Failed to load cancellations file: %s", exc)
+
+
 class FlightLoader:
     def __init__(
         self,
@@ -328,6 +366,7 @@ class FlightLoader:
         batch_size: int = BATCH_SIZE,
         refresh: bool = False,
         airports_file: Optional[Path] = None,
+        cancellations_file: Optional[Path] = None,
     ):
         self._client = client
         self._mapping = mapping
@@ -335,24 +374,40 @@ class FlightLoader:
         self._batch_size = max(1, batch_size)
         self._refresh = refresh
         self._airport_lookup = AirportLookup(airports_file, LOGGER)
-
-    def ensure_index(self) -> None:
-        if self._client.index_exists(self._index):
-            LOGGER.info("Index '%s' already exists, deleting it", self._index)
-            self._client.delete_index(self._index)
-        self._client.create_index(self._index, self._mapping)
+        self._cancellation_lookup = CancellationLookup(cancellations_file, LOGGER)
+        self._total_records = 0
+        self._loaded_records = 0
 
     def import_files(self, files: Iterable[Path]) -> None:
-        self.ensure_index()
-        for file_path in files:
+        file_list = list(files)
+        LOGGER.info("Counting records in %s file(s)...", len(file_list))
+        self._total_records = self._count_total_records_fast(file_list)
+        LOGGER.info("Total records to import: %s", self._format_number(self._total_records))
+        LOGGER.info("Importing %s file(s)...", len(file_list))
+        
+        for file_path in file_list:
             self._import_file(file_path)
+        
+        # Print newline after progress line
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        LOGGER.info(
+            "Import complete: %s of %s records loaded",
+            self._format_number(self._loaded_records),
+            self._format_number(self._total_records),
+        )
 
     def _import_file(self, file_path: Path) -> None:
         if not file_path.is_file():
             LOGGER.warning("Skipping %s (not a regular file)", file_path)
             return
 
-        LOGGER.info("Importing %s", file_path)
+        # Extract index name from filename (remove .csv.gz, .csv, .zip extensions)
+        index_name = self._extract_index_name_from_filename(file_path)
+        LOGGER.info("Importing %s into index %s", file_path, index_name)
+        
+        # Ensure index exists
+        self._ensure_index(index_name)
 
         buffered_lines: List[str] = []
         buffered_docs = 0
@@ -366,25 +421,21 @@ class FlightLoader:
             if not doc:
                 continue
 
-            buffered_lines.append(json.dumps({"index": {}}))
+            buffered_lines.append(json.dumps({"index": {"_index": index_name}}))
             buffered_lines.append(json.dumps(doc, ensure_ascii=False))
             buffered_docs += 1
 
             if buffered_docs >= self._batch_size:
                 batch_number += 1
-                docs_in_batch = self._flush(buffered_lines)
+                docs_in_batch = self._flush(buffered_lines, index_name)
                 indexed_docs += docs_in_batch
-                sys.stdout.write('.')
-                sys.stdout.flush()
                 buffered_lines.clear()
                 buffered_docs = 0
 
         if buffered_docs:
             batch_number += 1
-            docs_in_batch = self._flush(buffered_lines)
+            docs_in_batch = self._flush(buffered_lines, index_name)
             indexed_docs += docs_in_batch
-            sys.stdout.write('.')
-            sys.stdout.flush()
 
         LOGGER.info(
             "Finished %s (rows processed: %s, documents indexed: %s)",
@@ -417,9 +468,17 @@ class FlightLoader:
                 for row in reader:
                     yield row
 
-    def _flush(self, lines: List[str]) -> int:
+    def _ensure_index(self, index_name: str) -> None:
+        """Ensure an index exists, creating it if necessary."""
+        if self._client.index_exists(index_name):
+            LOGGER.info("Index '%s' already exists", index_name)
+            return
+        LOGGER.info("Creating index: %s", index_name)
+        self._client.create_index(index_name, self._mapping)
+
+    def _flush(self, lines: List[str], index_name: str) -> int:
         payload = ("\n".join(lines) + "\n").encode("utf-8")
-        result = self._client.bulk(self._index, payload, self._refresh)
+        result = self._client.bulk(index_name, payload, self._refresh)
 
         if result.get("errors"):
             items = result.get("items", [])
@@ -432,7 +491,23 @@ class FlightLoader:
                 LOGGER.error("Bulk item error: %s", error)
             raise RuntimeError("Bulk indexing reported errors; aborting")
 
-        return len(lines) // 2
+        doc_count = len(lines) // 2
+        self._loaded_records += doc_count
+        
+        if self._total_records > 0:
+            percentage = round(self._loaded_records / self._total_records * 100, 1)
+            progress = "\r{} of {} records loaded ({}%)".format(
+                self._format_number(self._loaded_records),
+                self._format_number(self._total_records),
+                percentage,
+            )
+        else:
+            progress = "\r{} records loaded".format(self._format_number(self._loaded_records))
+        
+        sys.stdout.write(progress)
+        sys.stdout.flush()
+        
+        return doc_count
 
     def _transform_row(self, row: Dict[str, str]) -> Dict[str, object]:
         doc: Dict[str, object] = {}
@@ -471,7 +546,13 @@ class FlightLoader:
         doc["Diverted"] = to_boolean(row.get("Diverted"))
 
         # Cancellation code
-        doc["CancellationCode"] = present(row.get("CancellationCode"))
+        cancellation_code = present(row.get("CancellationCode"))
+        doc["CancellationCode"] = cancellation_code
+
+        # Cancellation reason - lookup from cancellations data
+        cancellation_reason = self._cancellation_lookup.lookup_reason(cancellation_code)
+        if cancellation_reason:
+            doc["CancellationReason"] = cancellation_reason
 
         # Time duration fields (convert to minutes as integers)
         doc["ActualElapsedTimeMin"] = to_integer(row.get("ActualElapsedTime"))
@@ -500,6 +581,71 @@ class FlightLoader:
         # Remove None values
         compacted = {key: value for key, value in doc.items() if value is not None}
         return compacted
+
+    def _extract_index_name_from_filename(self, file_path: Path) -> str:
+        """Extract index name from filename by removing extensions."""
+        basename = file_path.stem  # Gets filename without extension
+        # Handle multiple extensions like .csv.gz
+        while basename.endswith(('.csv', '.gz', '.zip')):
+            basename = Path(basename).stem
+        return basename
+
+    def _format_number(self, number: int) -> str:
+        """Format number with thousands separators."""
+        return f"{number:,}"
+
+    def _count_total_records_fast(self, files: List[Path]) -> int:
+        """Count total records across all files using fast shell commands."""
+        total = 0
+        for file_path in files:
+            if not file_path.is_file():
+                continue
+            line_count = self._count_lines_fast(file_path)
+            # Subtract 1 for CSV header
+            total += max(line_count - 1, 0)
+        return total
+
+    def _count_lines_fast(self, file_path: Path) -> int:
+        """Count lines in a file using fast shell commands."""
+        try:
+            if file_path.suffix.lower() == ".zip":
+                with zipfile.ZipFile(file_path) as archive:
+                    entry_name = next(
+                        (name for name in archive.namelist() if name.lower().endswith(".csv")), None
+                    )
+                    if entry_name is None:
+                        return 0
+                    # Use unzip -p to extract and pipe to wc -l
+                    cmd = f'unzip -p {shlex.quote(str(file_path))} {shlex.quote(entry_name)} | wc -l'
+                    result = subprocess.run(
+                        cmd, shell=True, capture_output=True, text=True, check=False
+                    )
+                    if result.returncode != 0:
+                        LOGGER.warning("Failed to count lines in %s: %s", file_path, result.stderr)
+                        return 0
+                    return int(result.stdout.strip())
+            elif file_path.suffix.lower() == ".gz" or str(file_path).lower().endswith(".gz"):
+                # Use gunzip -c for gzip files
+                cmd = f'gunzip -c {shlex.quote(str(file_path))} | wc -l'
+                result = subprocess.run(
+                    cmd, shell=True, capture_output=True, text=True, check=False
+                )
+                if result.returncode != 0:
+                    LOGGER.warning("Failed to count lines in %s: %s", file_path, result.stderr)
+                    return 0
+                return int(result.stdout.strip())
+            else:
+                # Use wc -l for regular files
+                result = subprocess.run(
+                    ["wc", "-l", str(file_path)], capture_output=True, text=True, check=False
+                )
+                if result.returncode != 0:
+                    LOGGER.warning("Failed to count lines in %s: %s", file_path, result.stderr)
+                    return 0
+                return int(result.stdout.split()[0])
+        except Exception as exc:
+            LOGGER.warning("Failed to count lines in %s: %s", file_path, exc)
+            return 0
 
 
 def present(value: Optional[str]) -> Optional[str]:
@@ -580,13 +726,25 @@ def files_to_process(data_dir: Path, target_file: Optional[str], load_all: bool,
 
 
 def resolve_file_path(path: Path, data_dir: Path) -> Path:
-    # Allow explicit absolute/relative paths first.
+    # If path is absolute and exists, use it
+    if path.is_absolute() and path.exists():
+        return path.resolve()
+    
+    # If path exists relative to current directory, use it
     if path.exists():
         return path.resolve()
 
+    # Try relative to data_dir
     candidate = (data_dir / path).resolve()
     if candidate.exists():
         return candidate
+    
+    # If path starts with "data/", try stripping that prefix
+    path_str = str(path)
+    if path_str.startswith("data/"):
+        candidate = (data_dir / path_str[5:]).resolve()
+        if candidate.exists():
+            return candidate
 
     raise FileNotFoundError(f"File not found: {path}")
 
@@ -605,7 +763,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=str(DEFAULT_MAPPING_PATH),
         help=f"Path to mappings JSON (default: {DEFAULT_MAPPING_PATH})",
     )
-    parser.add_argument("-d", "--data-dir", default="data", help="Directory containing data files (default: data)")
+    parser.add_argument(
+        "-d",
+        "--data-dir",
+        default=str(SCRIPT_DIR.parent / "data"),
+        help="Directory containing data files (default: ../data relative to script)",
+    )
     parser.add_argument("-f", "--file", help="Only import the specified file")
     parser.add_argument("-a", "--all", action="store_true", help="Import all files found in the data directory")
     parser.add_argument("-g", "--glob", help="Import files matching the glob pattern")
@@ -615,6 +778,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--status", action="store_true", help="Test connection and print cluster health status")
     parser.add_argument("--delete-index", action="store_true", help="Delete the target index and exit")
     parser.add_argument("--airports", help="Path to airports.csv.gz file for geo-coordinate lookup")
+    parser.add_argument("--cancellations", help="Path to cancellations.csv file for cancellation reason lookup")
     return parser.parse_args(argv)
 
 
@@ -657,7 +821,12 @@ def main(argv: List[str]) -> None:
         if sum(1 for opt in selection_options if opt) > 1:
             raise SystemExit("Cannot use --file, --all, and --glob together (use only one).")
 
-    data_dir = Path(args.data_dir).resolve()
+    # Resolve data_dir - if relative, resolve relative to script's parent (project root)
+    data_dir_path = Path(args.data_dir)
+    if not data_dir_path.is_absolute():
+        data_dir = (SCRIPT_DIR.parent / data_dir_path).resolve()
+    else:
+        data_dir = data_dir_path.resolve()
     try:
         config = load_yaml(Path(args.config).resolve())
     except Exception as exc:
@@ -708,6 +877,19 @@ def main(argv: List[str]) -> None:
         if default_airports.exists():
             airports_file = default_airports
 
+    # Resolve cancellations file path
+    cancellations_file: Optional[Path] = None
+    if args.cancellations:
+        cancellations_file = Path(args.cancellations).resolve()
+        if not cancellations_file.exists():
+            LOGGER.warning("Cancellations file not found: %s", cancellations_file)
+            cancellations_file = None
+    else:
+        # Try default location in data directory
+        default_cancellations = data_dir / "cancellations.csv"
+        if default_cancellations.exists():
+            cancellations_file = default_cancellations
+
     loader = FlightLoader(
         client=client,
         mapping=mapping,
@@ -715,6 +897,7 @@ def main(argv: List[str]) -> None:
         batch_size=args.batch_size,
         refresh=args.refresh,
         airports_file=airports_file,
+        cancellations_file=cancellations_file,
     )
 
     try:

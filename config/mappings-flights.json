@@ -52,6 +52,9 @@
       "CancellationCode": {
         "type": "keyword"
       },
+      "CancellationReason": {
+        "type": "keyword"
+      },
       "Diverted": {
         "type": "boolean"
       },

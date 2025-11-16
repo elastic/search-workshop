@@ -14,6 +14,7 @@ require 'open3'
 require 'English'
 require 'zlib'
 require 'set'
+require 'shellwords'
 
 class ElasticsearchClient
   def initialize(config, logger:)
@@ -246,10 +247,44 @@ class AirportLookup
   end
 end
 
+class CancellationLookup
+  def initialize(cancellations_file:, logger:)
+    @logger = logger
+    @cancellations = {}
+    load_cancellations(cancellations_file) if cancellations_file && File.exist?(cancellations_file)
+  end
+
+  def lookup_reason(code)
+    return nil if code.nil? || code.empty?
+
+    @cancellations[code.upcase]
+  end
+
+  private
+
+  def load_cancellations(file_path)
+    @logger.info("Loading cancellations from #{file_path}")
+
+    count = 0
+    File.open(file_path, 'r', encoding: 'UTF-8') do |file|
+      CSV.new(file, headers: true).each do |row|
+        code = row['Code']&.strip
+        description = row['Description']&.strip
+        next if code.nil? || code.empty? || description.nil? || description.empty?
+
+        @cancellations[code.upcase] = description
+        count += 1
+      end
+    end
+
+    @logger.info("Loaded #{count} cancellation reasons into lookup table")
+  end
+end
+
 class FlightLoader
   BATCH_SIZE = 500
 
-  def initialize(client: nil, mapping:, index:, logger:, batch_size: BATCH_SIZE, refresh: false, airports_file: nil)
+  def initialize(client: nil, mapping:, index:, logger:, batch_size: BATCH_SIZE, refresh: false, airports_file: nil, cancellations_file: nil)
     @client = client
     @mapping = mapping
     @index_prefix = index # Store as prefix, e.g. 'flights'
@@ -257,7 +292,10 @@ class FlightLoader
     @batch_size = batch_size
     @refresh = refresh
     @airport_lookup = AirportLookup.new(airports_file: airports_file, logger: logger)
+    @cancellation_lookup = CancellationLookup.new(cancellations_file: cancellations_file, logger: logger)
     @ensured_indices = Set.new # Track which indices we've already created
+    @loaded_records = 0
+    @total_records = 0
   end
 
   def ensure_index(index_name)
@@ -281,9 +319,18 @@ class FlightLoader
   end
 
   def import_files(files)
+    @logger.info("Counting records in #{files.length} file(s)...")
+    @total_records = count_total_records_fast(files)
+    @logger.info("Total records to import: #{format_number(@total_records)}")
+    @logger.info("Importing #{files.length} file(s)...")
+    
     files.each do |file_path|
       import_file(file_path)
     end
+    
+    # Print newline after progress line
+    $stdout.puts
+    @logger.info("Import complete: #{format_number(@loaded_records)} of #{format_number(@total_records)} records loaded")
   end
 
   def sample_document(file_path)
@@ -305,6 +352,41 @@ class FlightLoader
   end
 
   private
+
+  def format_number(number)
+    number.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse
+  end
+
+  def count_total_records_fast(files)
+    total = 0
+    files.each do |file_path|
+      next unless File.file?(file_path)
+      
+      line_count = count_lines_fast(file_path)
+      # Subtract 1 for CSV header
+      total += [line_count - 1, 0].max
+    end
+    total
+  end
+
+  def count_lines_fast(file_path)
+    if File.extname(file_path).downcase == '.zip'
+      entry = csv_entry_in_zip(file_path)
+      return 0 unless entry
+      
+      result = `unzip -p #{Shellwords.escape(file_path)} #{Shellwords.escape(entry)} | wc -l`.strip
+      result.to_i
+    elsif file_path.downcase.end_with?('.gz')
+      result = `gunzip -c #{Shellwords.escape(file_path)} | wc -l`.strip
+      result.to_i
+    else
+      result = `wc -l #{Shellwords.escape(file_path)}`.strip
+      result.split.first.to_i
+    end
+  rescue StandardError => e
+    @logger.warn("Failed to count lines in #{file_path}: #{e.message}")
+    0
+  end
 
   def import_file(file_path)
     unless File.file?(file_path)
@@ -384,7 +466,6 @@ class FlightLoader
   end
 
   def flush_index(index_name, lines, doc_count)
-    @logger.info("Flushing #{doc_count} documents to index: #{index_name}")
     payload = lines.join("\n") + "\n"
     result = @client.bulk(index_name, payload, refresh: @refresh)
 
@@ -395,6 +476,15 @@ class FlightLoader
       end
       raise "Bulk indexing reported errors for #{index_name}; aborting"
     end
+
+    @loaded_records += doc_count
+    if @total_records > 0
+      percentage = (@loaded_records.to_f / @total_records * 100).round(1)
+      $stdout.print "\r#{format_number(@loaded_records)} of #{format_number(@total_records)} records loaded (#{percentage}%)"
+    else
+      $stdout.print "\r#{format_number(@loaded_records)} records loaded"
+    end
+    $stdout.flush
 
     doc_count
   rescue StandardError => e
@@ -537,7 +627,12 @@ class FlightLoader
     doc['Diverted'] = to_boolean(row['Diverted'])
 
     # Cancellation code
-    doc['CancellationCode'] = present(row['CancellationCode'])
+    cancellation_code = present(row['CancellationCode'])
+    doc['CancellationCode'] = cancellation_code
+    
+    # Cancellation reason - lookup from cancellations data
+    cancellation_reason = @cancellation_lookup.lookup_reason(cancellation_code)
+    doc['CancellationReason'] = cancellation_reason if cancellation_reason
 
     # Time duration fields (convert to minutes as integers)
     doc['ActualElapsedTimeMin'] = to_integer(row['ActualElapsedTime'])
@@ -630,7 +725,7 @@ end
 def parse_options(argv)
   options = {
     config: 'config/elasticsearch.yml',
-    mapping: 'mappings-flights.json',
+    mapping: 'config/mappings-flights.json',
     data_dir: 'data',
     index: 'flights',
     batch_size: FlightLoader::BATCH_SIZE,
@@ -639,7 +734,8 @@ def parse_options(argv)
     delete_index: false,
     delete_all: false,
     sample: false,
-    airports_file: 'data/airports.csv.gz'
+    airports_file: 'data/airports.csv.gz',
+    cancellations_file: 'data/cancellations.csv'
   }
 
   parser = OptionParser.new do |opts|
@@ -847,7 +943,8 @@ def main(argv)
     logger: logger,
     batch_size: options[:batch_size],
     refresh: options[:refresh],
-    airports_file: options[:airports_file]
+    airports_file: options[:airports_file],
+    cancellations_file: options[:cancellations_file]
   )
 
   files = files_to_process(options)
@@ -863,7 +960,8 @@ def sample_document(options:, logger:)
     logger: logger,
     batch_size: 1,
     refresh: false,
-    airports_file: options[:airports_file]
+    airports_file: options[:airports_file],
+    cancellations_file: options[:cancellations_file]
   )
 
   files = files_to_process(options)
