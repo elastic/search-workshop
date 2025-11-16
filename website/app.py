@@ -282,11 +282,12 @@ def search_stream():
     data = request.get_json() or {}
     query = data.get('query', '').strip()
     filters = data.get('filters', {})
+    conversation_id = data.get('conversation_id')
 
     def generate():
         try:
             # Use a generator to stream the response from the AI agent
-            for chunk in ai_agent_search(query, filters=filters, stream=True):
+            for chunk in ai_agent_search(query, filters=filters, conversation_id=conversation_id, stream=True):
                 yield chunk
         except Exception as e:
             LOGGER.error(f"Streaming search error: {e}", exc_info=True)
@@ -295,6 +296,60 @@ def search_stream():
             yield error_message
 
     return Response(stream_with_context(generate()), mimetype='application/x-ndjson')
+
+
+@app.route('/api/conversations', methods=['GET'])
+def get_conversations():
+    """Get list of conversations."""
+    try:
+        response = make_kibana_request('GET', '/api/agent_builder/conversations')
+        conversations = response.json()
+        LOGGER.info(f"Conversations API response: {conversations}")
+        # Ensure we return an array
+        if isinstance(conversations, list):
+            return jsonify(conversations)
+        elif isinstance(conversations, dict):
+            # Handle different response formats
+            if 'conversations' in conversations:
+                return jsonify(conversations['conversations'])
+            elif 'data' in conversations:
+                return jsonify(conversations['data'])
+            elif 'items' in conversations:
+                return jsonify(conversations['items'])
+            else:
+                # Return as single-item array if it's a dict with conversation data
+                return jsonify([conversations])
+        else:
+            return jsonify([])
+    except Exception as e:
+        LOGGER.error(f"Error fetching conversations: {e}", exc_info=True)
+        return jsonify({'error': f'Failed to fetch conversations: {str(e)}'}), 500
+
+
+@app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
+def delete_conversation(conversation_id):
+    """Delete a conversation by ID."""
+    if not conversation_id:
+        return jsonify({'error': 'conversation_id is required'}), 400
+
+    try:
+        encoded_id = urllib_parse.quote(str(conversation_id), safe='')
+        response = make_kibana_request('DELETE', f'/api/agent_builder/conversations/{encoded_id}')
+        try:
+            data = response.json()
+        except ValueError:
+            data = {}
+
+        if data:
+            return jsonify(data)
+        return ('', 204)
+    except requests.exceptions.HTTPError as e:
+        LOGGER.error(f"Error deleting conversation {conversation_id}: {e}", exc_info=True)
+        message = e.response.text if e.response is not None else str(e)
+        return jsonify({'error': f'Failed to delete conversation: {message}'}), e.response.status_code if e.response else 500
+    except Exception as e:
+        LOGGER.error(f"Unexpected error deleting conversation {conversation_id}: {e}", exc_info=True)
+        return jsonify({'error': f'Failed to delete conversation: {str(e)}'}), 500
 
 def search_all_indices(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Search across all indices (flights, airlines, contracts) and combine results."""
@@ -799,7 +854,7 @@ def search_contracts(query: str, search_type: str, size: int = 20, filters: Opti
     if search_type == 'semantic':
         return semantic_search(query, size, filters)
     elif search_type == 'ai':
-        return ai_agent_search(query, size, filters)
+        return ai_agent_search(query, size, filters, conversation_id=None, stream=False)
     else:  # keyword
         return keyword_search(query, size, filters)
 
@@ -961,7 +1016,7 @@ def semantic_search(query: str, size: int = 20, filters: Optional[Dict] = None) 
     return result
 
 
-def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None, stream: bool = False):
+def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None, conversation_id: Optional[str] = None, stream: bool = False):
     """Perform AI Agent Builder search with tool calling."""
     if not query:
         return {} if not stream else iter([])
@@ -971,6 +1026,9 @@ def ai_agent_search(query: str, size: int = 20, filters: Optional[Dict] = None, 
             "input": query,
             "agent_id": "flight-ai"
         }
+        # Include conversation_id if provided
+        if conversation_id:
+            body["conversation_id"] = conversation_id
         response = make_kibana_request('POST', '/api/agent_builder/converse/async', body=body, stream=True)
 
         def event_stream():
