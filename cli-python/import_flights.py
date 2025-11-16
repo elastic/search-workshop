@@ -266,6 +266,58 @@ class ElasticsearchClient:
         return None
 
 
+class AirportLookup:
+    def __init__(self, airports_file: Optional[Path], logger: logging.Logger):
+        self._logger = logger
+        self._airports: Dict[str, Tuple[float, float]] = {}
+        if airports_file and airports_file.exists():
+            self._load_airports(airports_file)
+
+    def lookup_coordinates(self, iata_code: Optional[str]) -> Optional[str]:
+        if not iata_code:
+            return None
+
+        airport = self._airports.get(iata_code.upper())
+        if not airport:
+            return None
+
+        lat, lon = airport
+        return f"{lat},{lon}"
+
+    def _load_airports(self, file_path: Path) -> None:
+        self._logger.info("Loading airports from %s", file_path)
+        count = 0
+
+        try:
+            with gzip.open(file_path, "rt", encoding="utf-8") as handle:
+                reader = csv.reader(handle)
+                for row in reader:
+                    # Columns: ID, Name, City, Country, IATA, ICAO, Lat, Lon, ...
+                    if len(row) < 8:
+                        continue
+
+                    iata = row[4].strip() if len(row) > 4 else ""
+                    if not iata or iata == "\\N":
+                        continue
+
+                    lat_str = row[6].strip() if len(row) > 6 else ""
+                    lon_str = row[7].strip() if len(row) > 7 else ""
+                    if not lat_str or not lon_str:
+                        continue
+
+                    try:
+                        lat = float(lat_str)
+                        lon = float(lon_str)
+                        self._airports[iata.upper()] = (lat, lon)
+                        count += 1
+                    except (ValueError, TypeError):
+                        continue
+
+            self._logger.info("Loaded %s airports into lookup table", count)
+        except Exception as exc:
+            self._logger.warning("Failed to load airports file: %s", exc)
+
+
 class FlightLoader:
     def __init__(
         self,
@@ -275,12 +327,14 @@ class FlightLoader:
         *,
         batch_size: int = BATCH_SIZE,
         refresh: bool = False,
+        airports_file: Optional[Path] = None,
     ):
         self._client = client
         self._mapping = mapping
         self._index = index
         self._batch_size = max(1, batch_size)
         self._refresh = refresh
+        self._airport_lookup = AirportLookup(airports_file, LOGGER)
 
     def ensure_index(self) -> None:
         if self._client.index_exists(self._index):
@@ -383,47 +437,67 @@ class FlightLoader:
     def _transform_row(self, row: Dict[str, str]) -> Dict[str, object]:
         doc: Dict[str, object] = {}
 
-        doc["Carrier"] = present(row.get("IATA_CODE_Reporting_Airline")) or present(
-            row.get("Reporting_Airline")
-        )
-        doc["FlightNum"] = present(row.get("Flight_Number_Reporting_Airline"))
-        doc["Origin"] = present(row.get("Origin"))
-        doc["OriginAirportID"] = present(row.get("OriginAirportID"))
-        doc["OriginCityName"] = present(row.get("OriginCityName"))
-        doc["OriginRegion"] = present(row.get("OriginState"))
-        doc["OriginCountry"] = present(row.get("OriginCountry")) or "US"
+        # Get timestamp - prefer @timestamp column if it exists, otherwise use FlightDate
+        timestamp = present(row.get("@timestamp")) or present(row.get("FlightDate"))
+        doc["@timestamp"] = timestamp
 
-        doc["Dest"] = present(row.get("Dest"))
-        doc["DestAirportID"] = present(row.get("DestAirportID"))
-        doc["DestCityName"] = present(row.get("DestCityName"))
-        doc["DestRegion"] = present(row.get("DestState"))
-        doc["DestCountry"] = present(row.get("DestCountry")) or "US"
+        # Flight ID - construct from date, airline, flight number, origin, and destination
+        flight_date = timestamp
+        reporting_airline = present(row.get("Reporting_Airline"))
+        flight_number = present(row.get("Flight_Number_Reporting_Airline"))
+        origin = present(row.get("Origin"))
+        dest = present(row.get("Dest"))
 
+        if flight_date and reporting_airline and flight_number and origin and dest:
+            doc["FlightID"] = f"{flight_date}_{reporting_airline}_{flight_number}_{origin}_{dest}"
+
+        # Direct mappings from CSV to mapping field names
+        doc["Reporting_Airline"] = reporting_airline
+        doc["Tail_Number"] = present(row.get("Tail_Number"))
+        doc["Flight_Number"] = flight_number
+        doc["Origin"] = origin
+        doc["Dest"] = dest
+
+        # Time fields - convert to integers (minutes or time in HHMM format)
+        doc["CRSDepTimeLocal"] = to_integer(row.get("CRSDepTime"))
+        doc["DepDelayMin"] = to_integer(row.get("DepDelay"))
+        doc["TaxiOutMin"] = to_integer(row.get("TaxiOut"))
+        doc["TaxiInMin"] = to_integer(row.get("TaxiIn"))
+        doc["CRSArrTimeLocal"] = to_integer(row.get("CRSArrTime"))
+        doc["ArrDelayMin"] = to_integer(row.get("ArrDelay"))
+
+        # Boolean fields
         doc["Cancelled"] = to_boolean(row.get("Cancelled"))
-        doc["FlightDelay"] = to_boolean(row.get("ArrDel15"))
-        doc["FlightDelayMin"] = to_integer(row.get("ArrDelayMinutes"))
-        doc["FlightDelayType"] = classify_delay(row.get("ArrivalDelayGroups"))
+        doc["Diverted"] = to_boolean(row.get("Diverted"))
 
-        minutes = to_float(row.get("CRSElapsedTime"))
-        if minutes is not None:
-            doc["FlightTimeMin"] = minutes
-            doc["FlightTimeHour"] = f"{minutes / 60.0:.2f}"
+        # Cancellation code
+        doc["CancellationCode"] = present(row.get("CancellationCode"))
 
-        distance_miles = to_float(row.get("Distance"))
-        if distance_miles is not None:
-            doc["DistanceMiles"] = distance_miles
-            doc["DistanceKilometers"] = round(distance_miles * 1.60934, 3)
+        # Time duration fields (convert to minutes as integers)
+        doc["ActualElapsedTimeMin"] = to_integer(row.get("ActualElapsedTime"))
+        doc["AirTimeMin"] = to_integer(row.get("AirTime"))
 
-        if "FlightTimeHour" not in doc:
-            dep_block = present(row.get("DepTimeBlk"))
-            if dep_block is not None:
-                doc["FlightTimeHour"] = dep_block
+        # Count and distance
+        doc["Flights"] = to_integer(row.get("Flights"))
+        doc["DistanceMiles"] = to_integer(row.get("Distance"))
 
-        doc["dayOfWeek"] = to_integer(row.get("DayOfWeek"))
-        timestamp = present(row.get("FlightDate"))
-        if timestamp is not None:
-            doc["timestamp"] = timestamp
+        # Delay fields (with Min suffix to match mapping)
+        doc["CarrierDelayMin"] = to_integer(row.get("CarrierDelay"))
+        doc["WeatherDelayMin"] = to_integer(row.get("WeatherDelay"))
+        doc["NASDelayMin"] = to_integer(row.get("NASDelay"))
+        doc["SecurityDelayMin"] = to_integer(row.get("SecurityDelay"))
+        doc["LateAircraftDelayMin"] = to_integer(row.get("LateAircraftDelay"))
 
+        # Geo point fields - lookup from airports data
+        origin_location = self._airport_lookup.lookup_coordinates(origin)
+        if origin_location:
+            doc["OriginLocation"] = origin_location
+
+        dest_location = self._airport_lookup.lookup_coordinates(dest)
+        if dest_location:
+            doc["DestLocation"] = dest_location
+
+        # Remove None values
         compacted = {key: value for key, value in doc.items() if value is not None}
         return compacted
 
@@ -468,28 +542,6 @@ def to_boolean(value: Optional[str]) -> Optional[bool]:
     except ValueError:
         return None
     return numeric > 0
-
-
-def classify_delay(value: Optional[str]) -> Optional[str]:
-    group = to_integer(value)
-    if group is None:
-        return None
-
-    mapping = {
-        -1: "early_or_ontime",
-        0: "late_0_14",
-        1: "late_15_29",
-        2: "late_30_44",
-        3: "late_45_59",
-        4: "late_60_74",
-        5: "late_75_89",
-        6: "late_90_104",
-        7: "late_105_119",
-        8: "late_120_134",
-        9: "late_135_149",
-        10: "late_150_plus",
-    }
-    return mapping.get(group, "unknown")
 
 
 def files_to_process(data_dir: Path, target_file: Optional[str], load_all: bool, glob_pattern: Optional[str]) -> List[Path]:
@@ -562,6 +614,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--refresh", action="store_true", help="Request an index refresh after each bulk request")
     parser.add_argument("--status", action="store_true", help="Test connection and print cluster health status")
     parser.add_argument("--delete-index", action="store_true", help="Delete the target index and exit")
+    parser.add_argument("--airports", help="Path to airports.csv.gz file for geo-coordinate lookup")
     return parser.parse_args(argv)
 
 
@@ -642,12 +695,26 @@ def main(argv: List[str]) -> None:
     except Exception as exc:
         raise SystemExit(str(exc)) from exc
 
+    # Resolve airports file path
+    airports_file: Optional[Path] = None
+    if args.airports:
+        airports_file = Path(args.airports).resolve()
+        if not airports_file.exists():
+            LOGGER.warning("Airports file not found: %s", airports_file)
+            airports_file = None
+    else:
+        # Try default location in data directory
+        default_airports = data_dir / "airports.csv.gz"
+        if default_airports.exists():
+            airports_file = default_airports
+
     loader = FlightLoader(
         client=client,
         mapping=mapping,
         index=args.index,
         batch_size=args.batch_size,
         refresh=args.refresh,
+        airports_file=airports_file,
     )
 
     try:
