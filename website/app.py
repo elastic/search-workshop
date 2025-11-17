@@ -326,30 +326,50 @@ def get_conversations():
         return jsonify({'error': f'Failed to fetch conversations: {str(e)}'}), 500
 
 
-@app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
-def delete_conversation(conversation_id):
-    """Delete a conversation by ID."""
+@app.route('/api/conversations/<conversation_id>', methods=['GET', 'DELETE'])
+def conversation_detail(conversation_id):
+    """Fetch or delete a conversation by ID."""
     if not conversation_id:
         return jsonify({'error': 'conversation_id is required'}), 400
 
+    encoded_id = urllib_parse.quote(str(conversation_id), safe='')
+
+    if request.method == 'DELETE':
+        try:
+            response = make_kibana_request('DELETE', f'/api/agent_builder/conversations/{encoded_id}')
+            try:
+                data = response.json()
+            except ValueError:
+                data = {}
+
+            if data:
+                return jsonify(data)
+            return ('', 204)
+        except requests.exceptions.HTTPError as e:
+            LOGGER.error(f"Error deleting conversation {conversation_id}: {e}", exc_info=True)
+            message = e.response.text if e.response is not None else str(e)
+            status_code = e.response.status_code if e.response else 500
+            return jsonify({'error': f'Failed to delete conversation: {message}'}), status_code
+        except Exception as e:
+            LOGGER.error(f"Unexpected error deleting conversation {conversation_id}: {e}", exc_info=True)
+            return jsonify({'error': f'Failed to delete conversation: {str(e)}'}), 500
+
+    # GET
     try:
-        encoded_id = urllib_parse.quote(str(conversation_id), safe='')
-        response = make_kibana_request('DELETE', f'/api/agent_builder/conversations/{encoded_id}')
+        response = make_kibana_request('GET', f'/api/agent_builder/conversations/{encoded_id}')
         try:
             data = response.json()
         except ValueError:
             data = {}
-
-        if data:
-            return jsonify(data)
-        return ('', 204)
+        return jsonify(data)
     except requests.exceptions.HTTPError as e:
-        LOGGER.error(f"Error deleting conversation {conversation_id}: {e}", exc_info=True)
+        LOGGER.error(f"Error fetching conversation {conversation_id}: {e}", exc_info=True)
         message = e.response.text if e.response is not None else str(e)
-        return jsonify({'error': f'Failed to delete conversation: {message}'}), e.response.status_code if e.response else 500
+        status_code = e.response.status_code if e.response else 500
+        return jsonify({'error': f'Failed to load conversation: {message}'}), status_code
     except Exception as e:
-        LOGGER.error(f"Unexpected error deleting conversation {conversation_id}: {e}", exc_info=True)
-        return jsonify({'error': f'Failed to delete conversation: {str(e)}'}), 500
+        LOGGER.error(f"Unexpected error fetching conversation {conversation_id}: {e}", exc_info=True)
+        return jsonify({'error': f'Failed to load conversation: {str(e)}'}), 500
 
 def search_all_indices(query: str, search_type: str, size: int = 20, filters: Optional[Dict] = None) -> Dict:
     """Search across all indices (flights, airlines, contracts) and combine results."""

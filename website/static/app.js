@@ -37,6 +37,41 @@ const TEXT_EXTRACTION_KEYS = [
     'body'
 ];
 
+const DEFAULT_SEARCH_PLACEHOLDER = 'Search...';
+const FOLLOWUP_SEARCH_PLACEHOLDER = 'Ask a follow-up question...';
+const AI_DEFAULT_SEARCH_PLACEHOLDER = 'Search by asking a question';
+
+function generateUniqueId(prefix = 'id') {
+    const randomPart = Math.random().toString(36).slice(2, 8);
+    const timePart = Date.now().toString(36);
+    return `${prefix}-${randomPart}-${timePart}`;
+}
+
+function getConversationIdFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('conversation_id');
+}
+
+function hasConversationInURL() {
+    return Boolean(getConversationIdFromURL());
+}
+
+function updateSearchPlaceholder() {
+    if (!searchInput) {
+        return;
+    }
+    const hasConversation = hasConversationInURL() || Boolean(currentConversationId);
+    let placeholder = DEFAULT_SEARCH_PLACEHOLDER;
+
+    if (hasConversation) {
+        placeholder = FOLLOWUP_SEARCH_PLACEHOLDER;
+    } else if (currentSearchMode === 'ai' && currentIndex === 'all') {
+        placeholder = AI_DEFAULT_SEARCH_PLACEHOLDER;
+    }
+
+    searchInput.setAttribute('placeholder', placeholder);
+}
+
 function escapeForRegex(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -448,6 +483,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     facetsContainer.innerHTML = '';
                     // Display index selector and conversation history
                     ensureConversationSidebar({ forceIndex: true, refresh: true });
+                    // Show helper message if no conversation selected yet
+                    displayAiHelperMessage();
                     // Clear conversation ID when switching to AI mode (unless already set from URL)
                     if (!currentConversationId) {
                         updateURL();
@@ -491,18 +528,30 @@ document.addEventListener('DOMContentLoaded', () => {
 async function performSearch() {
     const query = searchInput.value.trim();
     
-    currentQuery = query;
     hideError();
     showLoading();
     clearResults();
     
-    updateURL();
-    
     if (currentSearchMode === 'ai') {
+        clearAISearchInput();
         await performStreamingSearch(query);
-    } else {
-        await performRegularSearch(query);
+        return;
     }
+
+    currentQuery = query;
+    updateURL();
+    await performRegularSearch(query);
+}
+
+function clearAISearchInput() {
+    searchInput.value = '';
+    currentQuery = '';
+
+    // Keep conversation state aligned with the current URL before updating it
+    const urlConversationId = getConversationIdFromURL();
+    currentConversationId = urlConversationId || null;
+
+    updateURL({ replace: true });
 }
 
 async function performRegularSearch(query) {
@@ -543,9 +592,13 @@ async function performStreamingSearch(query) {
             filters: Object.keys(currentFilters).length > 0 ? currentFilters : {}
         };
         
-        // Include conversation_id if present
-        if (currentConversationId) {
-            requestBody.conversation_id = currentConversationId;
+        // Include conversation_id only when explicitly present in the URL
+        const urlConversationId = getConversationIdFromURL();
+        if (urlConversationId) {
+            requestBody.conversation_id = urlConversationId;
+            currentConversationId = urlConversationId;
+        } else {
+            currentConversationId = null;
         }
 
         const response = await fetch('/api/search/stream', {
@@ -569,37 +622,88 @@ async function performStreamingSearch(query) {
 }
 
 async function displayAIResults(response, query) {
-    resultsContainer.innerHTML = `
-        <div class="ai-stream-wrapper" id="ai-stream-container">
-            <div class="ai-conversation-title" id="ai-conversation-title" style="display: none; padding: 12px; margin-bottom: 16px; background: var(--color-bg-secondary); border-radius: 8px; font-weight: 600; color: var(--bs-body-color);"></div>
-            <div class="ai-message ai-message-user">
-                <div class="ai-message-header">
-                    <span class="ai-avatar">You</span>
-                    <span class="ai-timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-                <div class="ai-message-content">${escapeHtml(query || '(empty query)')}</div>
+    // Check if we should append to existing conversation
+    const conversationId = getConversationIdFromURL();
+    if (conversationId) {
+        currentConversationId = conversationId;
+    }
+    const existingContainer = document.getElementById('ai-stream-container');
+    const shouldAppend = Boolean(conversationId && existingContainer);
+    
+    if (shouldAppend) {
+        // Append new messages to existing conversation
+        const userMessage = document.createElement('div');
+        userMessage.className = 'ai-message ai-message-user';
+        userMessage.innerHTML = `
+            <div class="ai-message-header">
+                <span class="ai-avatar">You</span>
+                <span class="ai-timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
-            <div class="ai-message ai-message-assistant">
-                <div class="ai-message-header">
-                    <span class="ai-avatar">Flight AI</span>
-                    <span class="ai-status-badge" id="ai-status-badge">Thinking…</span>
+            <div class="ai-message-content">${escapeHtml(query || '(empty query)')}</div>
+        `;
+        existingContainer.appendChild(userMessage);
+        
+        const assistantMessage = document.createElement('div');
+        assistantMessage.className = 'ai-message ai-message-assistant';
+        assistantMessage.innerHTML = `
+            <div class="ai-message-header">
+                <span class="ai-avatar">Flight AI</span>
+                <span class="ai-status-badge" id="ai-status-badge">Thinking…</span>
+            </div>
+            <div class="ai-message-content">
+                <div class="ai-assistant-text" id="ai-assistant-text"></div>
+                <div class="typing-indicator is-active" id="ai-typing-indicator">
+                    <span></span><span></span><span></span>
                 </div>
-                <div class="ai-message-content">
-                    <div class="ai-assistant-text" id="ai-assistant-text"></div>
-                    <div class="typing-indicator is-active" id="ai-typing-indicator">
-                        <span></span><span></span><span></span>
+                <div class="ai-tool-events" id="ai-tool-events"></div>
+            </div>
+        `;
+        existingContainer.appendChild(assistantMessage);
+    } else {
+        // Create new conversation container
+        resultsContainer.innerHTML = `
+            <div class="ai-stream-wrapper" id="ai-stream-container">
+                <div class="ai-conversation-title" id="ai-conversation-title" style="display: none; padding: 12px; margin-bottom: 16px; background: var(--color-bg-secondary); border-radius: 8px; font-weight: 600; color: var(--bs-body-color);"></div>
+                <div class="ai-message ai-message-user">
+                    <div class="ai-message-header">
+                        <span class="ai-avatar">You</span>
+                        <span class="ai-timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
-                    <div class="ai-tool-events" id="ai-tool-events"></div>
+                    <div class="ai-message-content">${escapeHtml(query || '(empty query)')}</div>
+                </div>
+                <div class="ai-message ai-message-assistant">
+                    <div class="ai-message-header">
+                        <span class="ai-avatar">Flight AI</span>
+                        <span class="ai-status-badge" id="ai-status-badge">Thinking…</span>
+                    </div>
+                    <div class="ai-message-content">
+                        <div class="ai-assistant-text" id="ai-assistant-text"></div>
+                        <div class="typing-indicator is-active" id="ai-typing-indicator">
+                            <span></span><span></span><span></span>
+                        </div>
+                        <div class="ai-tool-events" id="ai-tool-events"></div>
+                    </div>
                 </div>
             </div>
-        </div>
-    `;
+        `;
+    }
 
     const streamContainer = document.getElementById('ai-stream-container');
-    const assistantTextEl = document.getElementById('ai-assistant-text');
-    const typingIndicatorEl = document.getElementById('ai-typing-indicator');
-    const toolEventsEl = document.getElementById('ai-tool-events');
-    const statusBadgeEl = document.getElementById('ai-status-badge');
+    // When appending, get the last assistant message's elements
+    let assistantTextEl, typingIndicatorEl, toolEventsEl, statusBadgeEl;
+    if (shouldAppend) {
+        const assistantMessages = streamContainer.querySelectorAll('.ai-message-assistant');
+        const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
+        assistantTextEl = lastAssistantMessage.querySelector('.ai-assistant-text');
+        typingIndicatorEl = lastAssistantMessage.querySelector('.typing-indicator');
+        toolEventsEl = lastAssistantMessage.querySelector('.ai-tool-events');
+        statusBadgeEl = lastAssistantMessage.querySelector('.ai-status-badge');
+    } else {
+        assistantTextEl = document.getElementById('ai-assistant-text');
+        typingIndicatorEl = document.getElementById('ai-typing-indicator');
+        toolEventsEl = document.getElementById('ai-tool-events');
+        statusBadgeEl = document.getElementById('ai-status-badge');
+    }
     const conversationTitleEl = document.getElementById('ai-conversation-title');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -666,17 +770,54 @@ function renderAIStream(data, context) {
         eventEl.style.backgroundColor = 'var(--color-bg-secondary)';
         eventEl.style.borderLeft = '3px solid #6c757d';
 
+        const titleRow = document.createElement('div');
+        titleRow.style.display = 'flex';
+        titleRow.style.justifyContent = 'space-between';
+        titleRow.style.alignItems = 'center';
+        titleRow.style.cursor = 'pointer';
+        titleRow.style.userSelect = 'none';
+
         const titleEl = document.createElement('div');
         titleEl.className = 'ai-tool-event-title';
         titleEl.style.color = '#6c757d';
+        titleEl.style.marginBottom = '0';
         titleEl.textContent = title;
 
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'ai-tool-event-toggle';
+        toggleBtn.innerHTML = '<i class="bi bi-chevron-down"></i>';
+        toggleBtn.style.background = 'none';
+        toggleBtn.style.border = 'none';
+        toggleBtn.style.color = '#6c757d';
+        toggleBtn.style.padding = '0';
+        toggleBtn.style.cursor = 'pointer';
+        toggleBtn.style.fontSize = '0.9rem';
+        toggleBtn.setAttribute('aria-label', 'Toggle details');
+
         const bodyEl = document.createElement('div');
+        bodyEl.className = 'ai-tool-event-body';
         bodyEl.style.padding = '8px';
         bodyEl.style.whiteSpace = 'pre-wrap';
+        bodyEl.style.display = 'none'; // Collapsed by default
         bodyEl.textContent = text;
 
-        eventEl.appendChild(titleEl);
+        titleRow.appendChild(titleEl);
+        if (text) {
+            titleRow.appendChild(toggleBtn);
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isExpanded = bodyEl.style.display !== 'none';
+                bodyEl.style.display = isExpanded ? 'none' : 'block';
+                toggleBtn.innerHTML = isExpanded ? '<i class="bi bi-chevron-down"></i>' : '<i class="bi bi-chevron-up"></i>';
+            });
+        }
+        titleRow.addEventListener('click', () => {
+            if (text) {
+                toggleBtn.click();
+            }
+        });
+
+        eventEl.appendChild(titleRow);
         if (text) {
             eventEl.appendChild(bodyEl);
         }
@@ -694,17 +835,57 @@ function renderAIStream(data, context) {
         const eventEl = document.createElement('div');
         eventEl.className = 'ai-tool-event';
 
+        const titleRow = document.createElement('div');
+        titleRow.style.display = 'flex';
+        titleRow.style.justifyContent = 'space-between';
+        titleRow.style.alignItems = 'center';
+        titleRow.style.cursor = 'pointer';
+        titleRow.style.userSelect = 'none';
+
         const titleEl = document.createElement('div');
         titleEl.className = 'ai-tool-event-title';
+        titleEl.style.marginBottom = '0';
         titleEl.textContent = title;
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.className = 'ai-tool-event-toggle';
+        toggleBtn.innerHTML = '<i class="bi bi-chevron-down"></i>';
+        toggleBtn.style.background = 'none';
+        toggleBtn.style.border = 'none';
+        toggleBtn.style.color = 'var(--color-muted)';
+        toggleBtn.style.padding = '0';
+        toggleBtn.style.cursor = 'pointer';
+        toggleBtn.style.fontSize = '0.9rem';
+        toggleBtn.setAttribute('aria-label', 'Toggle details');
+
+        const bodyContainer = document.createElement('div');
+        bodyContainer.className = 'ai-tool-event-body';
+        bodyContainer.style.display = 'none'; // Collapsed by default
 
         const preEl = document.createElement('pre');
         const codeEl = document.createElement('code');
         codeEl.textContent = text;
         preEl.appendChild(codeEl);
+        bodyContainer.appendChild(preEl);
 
-        eventEl.appendChild(titleEl);
-        eventEl.appendChild(preEl);
+        titleRow.appendChild(titleEl);
+        if (text) {
+            titleRow.appendChild(toggleBtn);
+            toggleBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isExpanded = bodyContainer.style.display !== 'none';
+                bodyContainer.style.display = isExpanded ? 'none' : 'block';
+                toggleBtn.innerHTML = isExpanded ? '<i class="bi bi-chevron-down"></i>' : '<i class="bi bi-chevron-up"></i>';
+            });
+        }
+        titleRow.addEventListener('click', () => {
+            if (text) {
+                toggleBtn.click();
+            }
+        });
+
+        eventEl.appendChild(titleRow);
+        eventEl.appendChild(bodyContainer);
         toolEventsEl.appendChild(eventEl);
         toolEventsEl.classList.add('is-visible');
 
@@ -764,11 +945,18 @@ function renderAIStream(data, context) {
 
     // Handle events from async_events.txt documentation
     if (kind === 'conversation_id_set') {
-        // Store conversation ID and update URL
-        const conversationId = eventData.conversation_id;
-        context.conversationId = conversationId;
-        currentConversationId = conversationId;
-        updateURL();
+        // Store conversation ID and update URL only when starting a new conversation
+        const conversationIdFromEvent = eventData.conversation_id;
+        const urlConversationId = getConversationIdFromURL();
+        if (urlConversationId) {
+            context.conversationId = urlConversationId;
+            currentConversationId = urlConversationId;
+            updateSearchPlaceholder();
+        } else if (conversationIdFromEvent) {
+            context.conversationId = conversationIdFromEvent;
+            currentConversationId = conversationIdFromEvent;
+            updateURL();
+        }
     } else if (kind === 'reasoning') {
         // Display AI's reasoning/thinking
         const reasoning = eventData.reasoning || '';
@@ -1892,11 +2080,19 @@ async function displayConversationHistory() {
         </button>
     `;
     
-    if (conversations.length > 0) {
-        conversations.forEach(conv => {
-            const record = normalizeConversationRecord(conv);
+    const normalizedConversations = conversations
+        .map(conv => normalizeConversationRecord(conv))
+        .filter(record => Boolean(record));
+
+    const visibleConversations = normalizedConversations.filter(record => {
+        const conversationId = String(record.conversation_id ?? '').trim();
+        return !conversationId.startsWith('u_');
+    });
+
+    if (visibleConversations.length > 0) {
+        visibleConversations.forEach(record => {
             const title = record.title || 'Untitled Conversation';
-            const id = record.conversation_id || '';
+            const id = String(record.conversation_id ?? '').trim();
             const date = record.updated_at || record.created_at || '';
             let dateStr = '';
             if (date) {
@@ -1918,14 +2114,14 @@ async function displayConversationHistory() {
                             title="${escapeHtml(title)}">
                         <div class="conversation-item">
                             <div class="conversation-title">${escapeHtml(title)}</div>
-                            <div class="conversation-date">
-                                <span class="conversation-delete-link"
-                                      role="button"
-                                      tabindex="0"
-                                      data-conversation-id="${escapeHtml(id)}">
-                                    Delete
-                                </span>
-                            </div>
+                            <div class="conversation-date">${dateStr}</div>
+                            <span class="conversation-delete-link"
+                                  role="button"
+                                  tabindex="0"
+                                  data-conversation-id="${escapeHtml(id)}"
+                                  title="Delete conversation">
+                                <i class="bi bi-trash3"></i>
+                            </span>
                         </div>
                     </button>
                 </div>
@@ -2091,6 +2287,7 @@ function createNewConversation() {
     searchInput.value = '';
     currentQuery = '';
     clearResults();
+    displayAiHelperMessage();
     
     // Update URL (removes conversation_id)
     updateURL();
@@ -2146,6 +2343,10 @@ async function handleConversationDelete(conversationId) {
 }
 
 async function loadConversation(conversationId) {
+    if (!conversationId) {
+        return;
+    }
+
     // Switch to AI mode if not already
     if (currentSearchMode !== 'ai') {
         const aiModeRadio = document.getElementById('mode-ai');
@@ -2155,22 +2356,482 @@ async function loadConversation(conversationId) {
         }
     }
     
-    // Set current conversation ID
     currentConversationId = conversationId;
-    
-    // Clear search input and results
     searchInput.value = '';
     currentQuery = '';
     clearResults();
-    
+    hideError();
+
     // Update URL with conversation ID
     updateURL();
-    
-    // Focus on search input
-    searchInput.focus();
-    
-    // TODO: Load conversation messages and display them
-    // For now, the conversation will be loaded when user sends a message
+
+    showLoading();
+    try {
+        const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`);
+        if (!response.ok) {
+            let errorMessage = 'Failed to load conversation';
+            try {
+                const errorData = await response.json();
+                if (errorData && errorData.error) {
+                    errorMessage = errorData.error;
+                }
+            } catch (err) {
+                // ignore parse errors for error responses
+            }
+            throw new Error(errorMessage);
+        }
+
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (err) {
+            data = null;
+        }
+
+        const conversation = normalizeConversationDetail(data) || { conversation_id: conversationId };
+        renderConversationDetail(conversation);
+    } catch (error) {
+        console.error('Error loading conversation:', error);
+        showError(error.message || 'Failed to load conversation');
+    } finally {
+        hideLoading();
+        searchInput.focus();
+    }
+}
+
+function normalizeConversationDetail(payload) {
+    if (!payload) {
+        return null;
+    }
+
+    if (Array.isArray(payload)) {
+        return payload.length > 0 ? normalizeConversationDetail(payload[0]) : null;
+    }
+
+    if (payload.conversation && payload.conversation !== payload) {
+        return normalizeConversationDetail(payload.conversation);
+    }
+
+    if (payload.data && payload.data !== payload) {
+        return normalizeConversationDetail(payload.data);
+    }
+
+    if (payload.item && payload.item !== payload) {
+        return normalizeConversationDetail(payload.item);
+    }
+
+    if (payload.items && payload.items !== payload) {
+        return normalizeConversationDetail(Array.isArray(payload.items) ? payload.items : [payload.items]);
+    }
+
+    return payload;
+}
+
+function renderConversationDetail(conversation) {
+    if (!resultsContainer) {
+        return;
+    }
+
+    const assistantRenderQueue = [];
+    const title = (conversation && (conversation.title || conversation.name || conversation.metadata?.title)) || 'Conversation';
+    const conversationId = conversation?.conversation_id || conversation?.id || '';
+    const createdAt = conversation?.created_at || conversation?.createdAt || '';
+    const updatedAt = conversation?.updated_at || conversation?.updatedAt || '';
+    const rounds = Array.isArray(conversation?.rounds) ? conversation.rounds : [];
+
+    const metadataParts = [];
+    if (conversationId) {
+        metadataParts.push(`ID: ${conversationId}`);
+    }
+    if (createdAt) {
+        metadataParts.push(`Started ${formatConversationTimestamp(createdAt)}`);
+    }
+    if (updatedAt) {
+        metadataParts.push(`Updated ${formatConversationTimestamp(updatedAt)}`);
+    }
+
+    const metadataText = metadataParts
+        .map(part => part && typeof part === 'string' ? part : '')
+        .filter(Boolean)
+        .map(part => escapeHtml(part))
+        .join(' • ');
+
+    let html = `
+        <div class="ai-stream-wrapper conversation-history-view" id="ai-stream-container">
+            <div class="ai-conversation-title" id="ai-conversation-title">${escapeHtml(title)}</div>
+            ${metadataText ? `<div class="conversation-meta">${metadataText}</div>` : ''}
+    `;
+
+    if (!rounds.length) {
+        html += '<div class="text-muted small mt-3">No exchanges recorded for this conversation yet.</div>';
+    } else {
+        rounds.forEach((round, index) => {
+            html += buildConversationRoundHTML(round, index, assistantRenderQueue, rounds.length);
+        });
+    }
+
+    html += '</div>';
+    resultsContainer.innerHTML = html;
+
+    assistantRenderQueue.forEach(entry => {
+        const target = document.getElementById(entry.id);
+        if (target) {
+            renderAssistantMarkdown(target, entry.text || '');
+        }
+    });
+
+    const conversationTitleEl = document.getElementById('ai-conversation-title');
+    if (conversationTitleEl) {
+        conversationTitleEl.style.display = 'block';
+    }
+
+    initializeConversationTranscriptInteractions();
+}
+
+function buildConversationRoundHTML(round, index, assistantRenderQueue, totalRounds = 1) {
+    if (!round || typeof round !== 'object') {
+        return '';
+    }
+
+    const roundTimestamp = round.updated_at || round.completed_at || round.output?.timestamp || round.input?.timestamp || '';
+    const userMessage = extractRoundUserMessage(round);
+    const assistantMessage = extractRoundAssistantMessage(round);
+    const userTimestamp = round.input?.timestamp || round.input?.created_at || round.input?.createdAt || roundTimestamp;
+    const assistantTimestamp = round.output?.timestamp || round.output?.created_at || round.output?.createdAt || roundTimestamp;
+    const steps = Array.isArray(round.steps) ? round.steps : [];
+
+    const roundBodyId = generateUniqueId('conversation-round-body');
+    const userSummaryId = generateUniqueId('conversation-round-user');
+    const startCollapsed = totalRounds > 1;
+    const timestampText = roundTimestamp ? escapeHtml(formatConversationTimestamp(roundTimestamp)) : '';
+    const toggleLabel = startCollapsed ? 'Show details' : 'Hide details';
+    const toggleIcon = startCollapsed ? 'bi-chevron-down' : 'bi-chevron-up';
+    const userSummary = userMessage ? escapeHtml(truncateText(userMessage, 160)) : '(no user input)';
+
+    let html = `<div class="conversation-round" data-round-index="${index}">`;
+    html += `
+        <div class="conversation-round-header">
+            <div class="conversation-round-title">
+                <div class="conversation-round-user" id="${userSummaryId}">${userSummary}</div>
+                <div class="conversation-round-meta-row">
+                    <span class="conversation-round-label">Prompt ${index + 1}</span>
+                    ${timestampText ? `<span class="conversation-round-meta">${timestampText}</span>` : ''}
+                </div>
+            </div>
+            <button class="conversation-round-toggle" data-target="${roundBodyId}" aria-expanded="${startCollapsed ? 'false' : 'true'}">
+                <span class="conversation-round-toggle-label">${toggleLabel}</span>
+                <i class="bi ${toggleIcon}"></i>
+            </button>
+        </div>
+        <div class="conversation-round-body ${startCollapsed ? 'is-collapsed' : ''}" id="${roundBodyId}">
+    `;
+
+    if (userMessage) {
+        html += renderConversationMessage('user', userMessage, { timestamp: userTimestamp });
+    }
+
+    if (steps.length > 0) {
+        html += '<div class="conversation-steps">';
+        steps.forEach(step => {
+            html += renderConversationStep(step);
+        });
+        html += '</div>';
+    }
+
+    if (assistantMessage) {
+        html += renderConversationMessage('assistant', assistantMessage, {
+            timestamp: assistantTimestamp,
+            renderQueue: assistantRenderQueue
+        });
+    }
+
+    html += '</div></div>';
+    return html;
+}
+
+function extractRoundUserMessage(round) {
+    if (!round) {
+        return '';
+    }
+    const input = round.input || round.request || round.question;
+    if (!input) {
+        return round.prompt || round.message || '';
+    }
+    if (typeof input === 'string') {
+        return input;
+    }
+    return input.message || input.text || input.prompt || '';
+}
+
+function extractRoundAssistantMessage(round) {
+    if (!round) {
+        return '';
+    }
+    const output = round.output || round.response || round.answer || round.result;
+    if (!output) {
+        return '';
+    }
+    if (typeof output === 'string') {
+        return output;
+    }
+    return output.message || output.text || output.response || '';
+}
+
+function renderConversationMessage(role, text, options = {}) {
+    if (!text && text !== '') {
+        return '';
+    }
+
+    const isUser = role === 'user';
+    const timestampText = formatConversationTimestamp(options.timestamp);
+    let messageBody = '';
+
+    if (isUser) {
+        const safeText = text === '' ? '(empty message)' : String(text);
+        messageBody = `<div class="ai-message-content">${escapeHtml(safeText)}</div>`;
+    } else {
+        const id = options.assistantTextId || generateUniqueId('conversation-assistant');
+        if (options.renderQueue) {
+            options.renderQueue.push({ id, text: String(text || '') });
+        }
+        messageBody = `
+            <div class="ai-message-content">
+                <div class="ai-assistant-text" id="${id}"></div>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="ai-message ${isUser ? 'ai-message-user' : 'ai-message-assistant'}">
+            <div class="ai-message-header">
+                <span class="ai-avatar">${isUser ? 'You' : 'Flight AI'}</span>
+                ${timestampText ? `<span class="ai-timestamp">${escapeHtml(timestampText)}</span>` : ''}
+            </div>
+            ${messageBody}
+        </div>
+    `;
+}
+
+function truncateText(text, maxLength) {
+    if (!text || typeof text !== 'string') {
+        return '';
+    }
+    if (text.length <= maxLength) {
+        return text;
+    }
+    return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function renderConversationStep(step) {
+    if (!step || typeof step !== 'object') {
+        return '';
+    }
+
+    let stepType = (step.type || step.step_type || step.kind || '').toLowerCase();
+    if (!stepType && step.tool_call) {
+        stepType = 'tool_call';
+    } else if (!stepType && step.reasoning) {
+        stepType = 'reasoning';
+    }
+
+    if (stepType === 'reasoning') {
+        const reasoningText = step.reasoning || step.message || '';
+        if (!reasoningText) {
+            return '';
+        }
+        return `
+            <div class="conversation-step conversation-step-reasoning">
+                <div class="conversation-step-label">💭 Reasoning</div>
+                <div class="conversation-step-body">${escapeHtml(reasoningText)}</div>
+            </div>
+        `;
+    }
+
+    if (stepType === 'tool_call') {
+        const toolCall = step.tool_call && typeof step.tool_call === 'object' ? step.tool_call : step;
+        const toolName = toolCall.tool_name || toolCall.tool_id || 'Tool Call';
+        const params = toolCall.params ? `<pre class="conversation-step-code">${escapeHtml(JSON.stringify(toolCall.params, null, 2))}</pre>` : '';
+        const progression = renderProgressionList(toolCall.progression || toolCall.messages);
+        const results = renderConversationToolResults(toolCall.results || toolCall.result);
+        const callId = toolCall.tool_call_id || toolCall.id;
+        const bodyId = generateUniqueId('conversation-step-body');
+        return `
+            <div class="conversation-step conversation-step-tool">
+                <div class="conversation-step-header">
+                    <div class="conversation-step-label">🔧 ${escapeHtml(toolName)}</div>
+                    <button class="conversation-step-toggle" data-target="${bodyId}" aria-expanded="false">
+                        <span class="conversation-step-toggle-label">Show details</span>
+                        <i class="bi bi-chevron-down"></i>
+                    </button>
+                </div>
+                <div id="${bodyId}" class="conversation-step-body is-collapsed">
+                    ${callId ? `<div class="conversation-step-subtitle">Call ID: ${escapeHtml(callId)}</div>` : ''}
+                    ${params}
+                    ${progression}
+                    ${results}
+                </div>
+            </div>
+        `;
+    }
+
+    if (stepType === 'tool_result') {
+        const results = renderConversationToolResults(step.results || step.result || step.data);
+        if (!results) {
+            return '';
+        }
+        return `
+            <div class="conversation-step conversation-step-tool">
+                <div class="conversation-step-label">✅ Tool Result</div>
+                ${results}
+            </div>
+        `;
+    }
+
+    const fallback = `<pre class="conversation-step-code">${escapeHtml(JSON.stringify(step, null, 2))}</pre>`;
+    return `
+        <div class="conversation-step conversation-step-generic">
+            <div class="conversation-step-label">Step</div>
+            ${fallback}
+        </div>
+    `;
+}
+
+function renderProgressionList(entries) {
+    if (!entries) {
+        return '';
+    }
+
+    const messages = [];
+    if (Array.isArray(entries)) {
+        entries.forEach(item => {
+            if (typeof item === 'string') {
+                messages.push(item);
+            } else if (item && typeof item.message === 'string') {
+                messages.push(item.message);
+            }
+        });
+    } else if (typeof entries === 'string') {
+        messages.push(entries);
+    }
+
+    if (!messages.length) {
+        return '';
+    }
+
+    return `
+        <div class="conversation-step-subtitle">Progress</div>
+        <ul class="conversation-step-list">
+            ${messages.map(message => `<li>${escapeHtml(message)}</li>`).join('')}
+        </ul>
+    `;
+}
+
+function renderConversationToolResults(results) {
+    if (!results) {
+        return '';
+    }
+
+    const items = Array.isArray(results) ? results : [results];
+    if (!items.length) {
+        return '';
+    }
+
+    let html = '<div class="conversation-step-subtitle">Results</div>';
+    items.forEach((item, index) => {
+        html += `
+            <div class="conversation-tool-result">
+                <div class="conversation-tool-result-title">Result ${index + 1}</div>
+                <pre class="conversation-step-code">${escapeHtml(summarizeToolResult(item))}</pre>
+            </div>
+        `;
+    });
+    return html;
+}
+
+function summarizeToolResult(result) {
+    if (!result) {
+        return '';
+    }
+
+    if (typeof result === 'string') {
+        return result;
+    }
+
+    if (result.summary) {
+        return result.summary;
+    }
+
+    const highlights = result.data?.content?.highlights;
+    if (Array.isArray(highlights) && highlights.length > 0) {
+        return highlights.slice(0, 5).join('\n');
+    }
+
+    const text = result.data?.content?.text || result.data?.content?.body;
+    if (typeof text === 'string') {
+        return text;
+    }
+
+    if (result.data && typeof result.data === 'object') {
+        return JSON.stringify(result.data, null, 2);
+    }
+
+    return JSON.stringify(result, null, 2);
+}
+
+function formatConversationTimestamp(value) {
+    if (!value) {
+        return '';
+    }
+    try {
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+        return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    } catch (err) {
+        return '';
+    }
+}
+
+function initializeConversationTranscriptInteractions() {
+    if (!resultsContainer) {
+        return;
+    }
+
+    const toggleSection = (button, selector) => {
+        if (!button) {
+            return;
+        }
+        const targetId = button.dataset.target;
+        if (!targetId) {
+            return;
+        }
+        const targetEl = document.getElementById(targetId);
+        if (!targetEl) {
+            return;
+        }
+        const isCollapsed = targetEl.classList.toggle('is-collapsed');
+        button.setAttribute('aria-expanded', (!isCollapsed).toString());
+
+        const labelEl = button.querySelector(selector);
+        if (labelEl) {
+            labelEl.textContent = isCollapsed ? 'Show details' : 'Hide details';
+        }
+
+        const iconEl = button.querySelector('i');
+        if (iconEl) {
+            iconEl.classList.remove('bi-chevron-down', 'bi-chevron-up');
+            iconEl.classList.add(isCollapsed ? 'bi-chevron-down' : 'bi-chevron-up');
+        }
+    };
+
+    resultsContainer.querySelectorAll('.conversation-round-toggle').forEach(button => {
+        button.addEventListener('click', () => toggleSection(button, '.conversation-round-toggle-label'));
+    });
+
+    resultsContainer.querySelectorAll('.conversation-step-toggle').forEach(button => {
+        button.addEventListener('click', () => toggleSection(button, '.conversation-step-toggle-label'));
+    });
 }
 
 function hideFacets() {
@@ -2266,15 +2927,6 @@ function displayWelcomeMessage() {
                         <p class="welcome-card-text">Flight schedules, delays, cancellations, and statistics from 2019 to 2025</p>
                     </div>
                 </div>
-                <div class="welcome-card" data-index="airlines" role="button" tabindex="0">
-                    <div class="welcome-icon">
-                        <i class="bi bi-building"></i>
-                    </div>
-                    <div class="welcome-card-content">
-                        <h3 class="welcome-card-title">Major US Airlines</h3>
-                        <p class="welcome-card-text">Information about United, American, Delta, and Southwest</p>
-                    </div>
-                </div>
                 <div class="welcome-card" data-index="contracts" role="button" tabindex="0">
                     <div class="welcome-icon">
                         <i class="bi bi-file-earmark-text"></i>
@@ -2304,6 +2956,37 @@ function displayWelcomeMessage() {
             }
         });
     });
+}
+
+function displayAiHelperMessage() {
+    if (!resultsContainer || currentConversationId) {
+        return;
+    }
+
+    resultsContainer.innerHTML = `
+        <div class="ai-placeholder-message">
+            <div class="ai-placeholder-header">
+                <i class="bi bi-stars"></i>
+                <div>
+                    <p class="ai-placeholder-subtitle">
+                        I’m here to explore US domestic flight data (2019–2025) and the published policies for
+                        United, American, Delta, and Southwest. Ask a question whenever you’re ready.
+                    </p>
+                </div>
+            </div>
+            <p>Some ideas to get started:</p>
+            <ul class="ai-placeholder-list">
+                <li>Spotting delay or cancellation patterns for a route, airport, or carrier over time</li>
+                <li>Understanding how a contract rule applies to a scenario (bags, fees, disruptions, rebooking)</li>
+                <li>Comparing carriers on metrics like cancellations, tail numbers, or aircraft usage</li>
+                <li>Summarizing portions of the contracts of carriage into plain language</li>
+                <li>Brainstorming follow-up analyses after running a workshop dashboard or query</li>
+            </ul>
+            <p class="ai-placeholder-footer">
+                Not sure where to begin? Try describing the scenario you’re investigating and I’ll help break it down.
+            </p>
+        </div>
+    `;
 }
 
 function showLoading() {
@@ -2374,7 +3057,8 @@ function resetSearch() {
     searchInput.focus();
 }
 
-function updateURL() {
+function updateURL(options = {}) {
+    const { replace = false } = options;
     const params = new URLSearchParams();
     if (currentQuery) {
         params.set('q', currentQuery);
@@ -2410,7 +3094,13 @@ function updateURL() {
         ? `${window.location.pathname}?${params.toString()}`
         : window.location.pathname;
 
-    window.history.pushState({}, '', newURL);
+    if (replace) {
+        window.history.replaceState({}, '', newURL);
+    } else {
+        window.history.pushState({}, '', newURL);
+    }
+
+    updateSearchPlaceholder();
 }
 
 function restoreSearchFromURL() {
@@ -2419,6 +3109,7 @@ function restoreSearchFromURL() {
     const type = params.get('type');
     const index = params.get('index');
     const conversationId = params.get('conversation_id');
+    let skipAutoSearch = false;
 
     // Restore search mode (even if no query)
     if (type && ['keyword', 'semantic', 'ai'].includes(type)) {
@@ -2450,7 +3141,27 @@ function restoreSearchFromURL() {
     // Restore conversation ID from URL
     if (conversationId) {
         currentConversationId = conversationId;
+        skipAutoSearch = true;
+
+        // Force AI mode since conversations only apply there
+        if (currentSearchMode !== 'ai') {
+            currentSearchMode = 'ai';
+            const aiRadio = document.getElementById('mode-ai');
+            if (aiRadio) {
+                aiRadio.checked = true;
+            }
+        }
+
+        // Clear the input box and query state when resuming a conversation
+        searchInput.value = '';
+        currentQuery = '';
+
+        ensureConversationSidebar();
+        // Immediately hydrate the conversation view when arriving via URL params
+        loadConversation(conversationId);
     }
+
+    updateSearchPlaceholder();
 
     // Restore filters from URL
     currentFilters = {};
@@ -2473,7 +3184,7 @@ function restoreSearchFromURL() {
         ensureConversationSidebar();
     }
 
-    if (query) {
+    if (query && !skipAutoSearch) {
         // Restore search input
         searchInput.value = query;
         currentQuery = query;
@@ -2483,7 +3194,9 @@ function restoreSearchFromURL() {
     } else {
         // If there's no query, show welcome message or index selector
         currentQuery = '';
-        if (currentSearchMode !== 'ai') {
+        if (currentSearchMode === 'ai') {
+            displayAiHelperMessage();
+        } else {
             displayWelcomeMessage();
         }
     }
