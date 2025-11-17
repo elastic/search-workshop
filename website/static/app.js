@@ -629,41 +629,132 @@ async function displayAIResults(response, query) {
     }
     const existingContainer = document.getElementById('ai-stream-container');
     const shouldAppend = Boolean(conversationId && existingContainer);
+    const isHistoryView = existingContainer?.classList.contains('conversation-history-view');
     
     if (shouldAppend) {
-        // Append new messages to existing conversation
-        const userMessage = document.createElement('div');
-        userMessage.className = 'ai-message ai-message-user';
-        userMessage.innerHTML = `
-            <div class="ai-message-header">
-                <span class="ai-avatar">You</span>
-                <span class="ai-timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            </div>
-            <div class="ai-message-content">${escapeHtml(query || '(empty query)')}</div>
-        `;
-        existingContainer.appendChild(userMessage);
-        
-        const assistantMessage = document.createElement('div');
-        assistantMessage.className = 'ai-message ai-message-assistant';
-        assistantMessage.innerHTML = `
-            <div class="ai-message-header">
-                <span class="ai-avatar">Flight AI</span>
-                <span class="ai-status-badge" id="ai-status-badge">Thinking…</span>
-            </div>
-            <div class="ai-message-content">
-                <div class="ai-assistant-text" id="ai-assistant-text"></div>
-                <div class="typing-indicator is-active" id="ai-typing-indicator">
-                    <span></span><span></span><span></span>
+        if (isHistoryView) {
+            // Prepend new conversation round at the top (after title/metadata)
+            const existingRounds = existingContainer.querySelectorAll('.conversation-round');
+            
+            // Get the highest prompt number from existing rounds
+            let highestPromptNumber = 0;
+            existingRounds.forEach((roundEl) => {
+                const header = roundEl.querySelector('.conversation-round-header');
+                const label = header?.querySelector('.conversation-round-label');
+                if (label) {
+                    const match = label.textContent.match(/Prompt #(\d+)/);
+                    if (match) {
+                        const num = parseInt(match[1], 10);
+                        if (num > highestPromptNumber) {
+                            highestPromptNumber = num;
+                        }
+                    }
+                }
+            });
+            
+            // Find insertion point (after metadata, before first round)
+            const metadataEl = existingContainer.querySelector('.conversation-meta');
+            const insertAfter = metadataEl || existingContainer.querySelector('.ai-conversation-title');
+            const insertPoint = insertAfter ? insertAfter.nextSibling : null;
+            
+            // New prompt gets the next number (highest + 1)
+            const newPromptNumber = highestPromptNumber + 1;
+            
+            // Create new conversation round wrapper
+            const newRoundWrapper = document.createElement('div');
+            newRoundWrapper.className = 'conversation-round';
+            newRoundWrapper.setAttribute('data-round-index', newPromptNumber - 1);
+            
+            // Create header for the new round
+            const header = document.createElement('div');
+            header.className = 'conversation-round-header';
+            header.innerHTML = `
+                <div class="conversation-round-title">
+                    <div class="conversation-round-meta-row">
+                        <span class="conversation-round-label">Prompt #${newPromptNumber}</span>
+                        <span class="conversation-round-meta">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
                 </div>
-                <div class="ai-tool-events" id="ai-tool-events"></div>
-            </div>
-        `;
-        existingContainer.appendChild(assistantMessage);
+            `;
+            newRoundWrapper.appendChild(header);
+            
+            // Create user message
+            const userMessage = document.createElement('div');
+            userMessage.className = 'ai-message ai-message-user';
+            userMessage.innerHTML = `
+                <div class="ai-message-header">
+                    <span class="ai-avatar">You</span>
+                    <span class="ai-timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div class="ai-message-content">${escapeHtml(query || '(empty query)')}</div>
+            `;
+            newRoundWrapper.appendChild(userMessage);
+            
+            // Create assistant message container
+            const assistantMessage = document.createElement('div');
+            assistantMessage.className = 'ai-message ai-message-assistant';
+            assistantMessage.innerHTML = `
+                <div class="ai-message-header">
+                    <span class="ai-avatar">Flight AI</span>
+                    <span class="ai-status-badge" id="ai-status-badge">Thinking…</span>
+                </div>
+                <div class="ai-message-content">
+                    <div class="ai-assistant-text" id="ai-assistant-text"></div>
+                    <div class="typing-indicator is-active" id="ai-typing-indicator">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <div class="ai-tool-events" id="ai-tool-events"></div>
+                </div>
+            `;
+            newRoundWrapper.appendChild(assistantMessage);
+            
+            // Insert at the top
+            if (insertPoint) {
+                existingContainer.insertBefore(newRoundWrapper, insertPoint);
+            } else {
+                existingContainer.appendChild(newRoundWrapper);
+            }
+        } else {
+            // Simple message mode - prepend at top
+            const userMessage = document.createElement('div');
+            userMessage.className = 'ai-message ai-message-user';
+            userMessage.innerHTML = `
+                <div class="ai-message-header">
+                    <span class="ai-avatar">You</span>
+                    <span class="ai-timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div class="ai-message-content">${escapeHtml(query || '(empty query)')}</div>
+            `;
+            // Insert after title if exists, otherwise at start
+            const titleEl = existingContainer.querySelector('.ai-conversation-title');
+            if (titleEl && titleEl.nextSibling) {
+                existingContainer.insertBefore(userMessage, titleEl.nextSibling);
+            } else {
+                existingContainer.insertBefore(userMessage, existingContainer.firstChild);
+            }
+            
+            const assistantMessage = document.createElement('div');
+            assistantMessage.className = 'ai-message ai-message-assistant';
+            assistantMessage.innerHTML = `
+                <div class="ai-message-header">
+                    <span class="ai-avatar">Flight AI</span>
+                    <span class="ai-status-badge" id="ai-status-badge">Thinking…</span>
+                </div>
+                <div class="ai-message-content">
+                    <div class="ai-assistant-text" id="ai-assistant-text"></div>
+                    <div class="typing-indicator is-active" id="ai-typing-indicator">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <div class="ai-tool-events" id="ai-tool-events"></div>
+                </div>
+            `;
+            existingContainer.insertBefore(assistantMessage, userMessage.nextSibling);
+        }
     } else {
         // Create new conversation container
         resultsContainer.innerHTML = `
             <div class="ai-stream-wrapper" id="ai-stream-container">
-                <div class="ai-conversation-title" id="ai-conversation-title" style="display: none; padding: 12px; margin-bottom: 16px; background: var(--color-bg-secondary); border-radius: 8px; font-weight: 600; color: var(--bs-body-color);"></div>
+                <div class="ai-conversation-title" id="ai-conversation-title" style="display: none;"></div>
                 <div class="ai-message ai-message-user">
                     <div class="ai-message-header">
                         <span class="ai-avatar">You</span>
@@ -689,15 +780,16 @@ async function displayAIResults(response, query) {
     }
 
     const streamContainer = document.getElementById('ai-stream-container');
-    // When appending, get the last assistant message's elements
+    // When appending, get the first (newest) assistant message's elements
     let assistantTextEl, typingIndicatorEl, toolEventsEl, statusBadgeEl;
     if (shouldAppend) {
+        // Get the first assistant message (which is now at the top)
         const assistantMessages = streamContainer.querySelectorAll('.ai-message-assistant');
-        const lastAssistantMessage = assistantMessages[assistantMessages.length - 1];
-        assistantTextEl = lastAssistantMessage.querySelector('.ai-assistant-text');
-        typingIndicatorEl = lastAssistantMessage.querySelector('.typing-indicator');
-        toolEventsEl = lastAssistantMessage.querySelector('.ai-tool-events');
-        statusBadgeEl = lastAssistantMessage.querySelector('.ai-status-badge');
+        const newestAssistantMessage = assistantMessages[0]; // First one is newest now
+        assistantTextEl = newestAssistantMessage.querySelector('.ai-assistant-text');
+        typingIndicatorEl = newestAssistantMessage.querySelector('.typing-indicator');
+        toolEventsEl = newestAssistantMessage.querySelector('.ai-tool-events');
+        statusBadgeEl = newestAssistantMessage.querySelector('.ai-status-badge');
     } else {
         assistantTextEl = document.getElementById('ai-assistant-text');
         typingIndicatorEl = document.getElementById('ai-typing-indicator');
@@ -2465,8 +2557,12 @@ function renderConversationDetail(conversation) {
     if (!rounds.length) {
         html += '<div class="text-muted small mt-3">No exchanges recorded for this conversation yet.</div>';
     } else {
-        rounds.forEach((round, index) => {
-            html += buildConversationRoundHTML(round, index, assistantRenderQueue, rounds.length);
+        // Reverse rounds so latest is first, but keep original numbering
+        const reversedRounds = [...rounds].reverse();
+        reversedRounds.forEach((round, reversedIndex) => {
+            // Use original index (from end) so oldest gets #1, newest gets highest number
+            const originalIndex = rounds.length - 1 - reversedIndex;
+            html += buildConversationRoundHTML(round, originalIndex, assistantRenderQueue, rounds.length);
         });
     }
 
@@ -2500,44 +2596,48 @@ function buildConversationRoundHTML(round, index, assistantRenderQueue, totalRou
     const assistantTimestamp = round.output?.timestamp || round.output?.created_at || round.output?.createdAt || roundTimestamp;
     const steps = Array.isArray(round.steps) ? round.steps : [];
 
-    const roundBodyId = generateUniqueId('conversation-round-body');
-    const userSummaryId = generateUniqueId('conversation-round-user');
-    const startCollapsed = totalRounds > 1;
+    const stepsId = generateUniqueId('conversation-steps');
     const timestampText = roundTimestamp ? escapeHtml(formatConversationTimestamp(roundTimestamp)) : '';
-    const toggleLabel = startCollapsed ? 'Show details' : 'Hide details';
-    const toggleIcon = startCollapsed ? 'bi-chevron-down' : 'bi-chevron-up';
-    const userSummary = userMessage ? escapeHtml(truncateText(userMessage, 160)) : '(no user input)';
+    const hasSteps = steps.length > 0;
+    const startStepsCollapsed = hasSteps && totalRounds > 1;
+    const toggleLabel = startStepsCollapsed ? 'Show tool calls' : 'Hide tool calls';
+    const toggleIcon = startStepsCollapsed ? 'bi-chevron-down' : 'bi-chevron-up';
 
     let html = `<div class="conversation-round" data-round-index="${index}">`;
+    
+    // Header with metadata
     html += `
         <div class="conversation-round-header">
             <div class="conversation-round-title">
-                <div class="conversation-round-user" id="${userSummaryId}">${userSummary}</div>
                 <div class="conversation-round-meta-row">
-                    <span class="conversation-round-label">Prompt ${index + 1}</span>
+                    <span class="conversation-round-label">Prompt #${index + 1}</span>
                     ${timestampText ? `<span class="conversation-round-meta">${timestampText}</span>` : ''}
                 </div>
             </div>
-            <button class="conversation-round-toggle" data-target="${roundBodyId}" aria-expanded="${startCollapsed ? 'false' : 'true'}">
-                <span class="conversation-round-toggle-label">${toggleLabel}</span>
-                <i class="bi ${toggleIcon}"></i>
-            </button>
+            ${hasSteps ? `
+                <button class="conversation-round-toggle" data-target="${stepsId}" aria-expanded="${startStepsCollapsed ? 'false' : 'true'}">
+                    <span class="conversation-round-toggle-label">${toggleLabel}</span>
+                    <i class="bi ${toggleIcon}"></i>
+                </button>
+            ` : ''}
         </div>
-        <div class="conversation-round-body ${startCollapsed ? 'is-collapsed' : ''}" id="${roundBodyId}">
     `;
 
+    // User message - always visible
     if (userMessage) {
         html += renderConversationMessage('user', userMessage, { timestamp: userTimestamp });
     }
 
-    if (steps.length > 0) {
-        html += '<div class="conversation-steps">';
+    // Steps (tool calls) - collapsible
+    if (hasSteps) {
+        html += `<div class="conversation-steps ${startStepsCollapsed ? 'is-collapsed' : ''}" id="${stepsId}">`;
         steps.forEach(step => {
             html += renderConversationStep(step);
         });
         html += '</div>';
     }
 
+    // Assistant message - always visible
     if (assistantMessage) {
         html += renderConversationMessage('assistant', assistantMessage, {
             timestamp: assistantTimestamp,
@@ -2545,7 +2645,7 @@ function buildConversationRoundHTML(round, index, assistantRenderQueue, totalRou
         });
     }
 
-    html += '</div></div>';
+    html += '</div>';
     return html;
 }
 
@@ -2798,7 +2898,7 @@ function initializeConversationTranscriptInteractions() {
         return;
     }
 
-    const toggleSection = (button, selector) => {
+    const toggleSection = (button, selector, labelText = { show: 'Show details', hide: 'Hide details' }) => {
         if (!button) {
             return;
         }
@@ -2815,7 +2915,7 @@ function initializeConversationTranscriptInteractions() {
 
         const labelEl = button.querySelector(selector);
         if (labelEl) {
-            labelEl.textContent = isCollapsed ? 'Show details' : 'Hide details';
+            labelEl.textContent = isCollapsed ? labelText.show : labelText.hide;
         }
 
         const iconEl = button.querySelector('i');
@@ -2826,7 +2926,10 @@ function initializeConversationTranscriptInteractions() {
     };
 
     resultsContainer.querySelectorAll('.conversation-round-toggle').forEach(button => {
-        button.addEventListener('click', () => toggleSection(button, '.conversation-round-toggle-label'));
+        button.addEventListener('click', () => toggleSection(button, '.conversation-round-toggle-label', {
+            show: 'Show tool calls',
+            hide: 'Hide tool calls'
+        }));
     });
 
     resultsContainer.querySelectorAll('.conversation-step-toggle').forEach(button => {
