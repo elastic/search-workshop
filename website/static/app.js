@@ -2190,8 +2190,27 @@ async function displayConversationHistory() {
         return !conversationId.startsWith('u_');
     });
 
-    if (visibleConversations.length > 0) {
-        visibleConversations.forEach(record => {
+    const getConversationTimestamp = (record) => {
+        const dateStr = record?.updated_at || record?.created_at || '';
+        if (!dateStr) return 0;
+        const timestamp = Date.parse(dateStr);
+        return Number.isNaN(timestamp) ? 0 : timestamp;
+    };
+
+    const sortedConversations = [...visibleConversations].sort((a, b) => {
+        const timeDiff = getConversationTimestamp(b) - getConversationTimestamp(a);
+        if (timeDiff !== 0) {
+            return timeDiff;
+        }
+        const titleA = (a?.title || '').toLowerCase();
+        const titleB = (b?.title || '').toLowerCase();
+        if (titleA < titleB) return -1;
+        if (titleA > titleB) return 1;
+        return 0;
+    });
+
+    if (sortedConversations.length > 0) {
+        sortedConversations.forEach(record => {
             const title = record.title || 'Untitled Conversation';
             const id = String(record.conversation_id ?? '').trim();
             const date = record.updated_at || record.created_at || '';
