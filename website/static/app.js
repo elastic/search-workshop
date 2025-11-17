@@ -530,9 +530,18 @@ async function performSearch() {
     
     hideError();
     showLoading();
-    clearResults();
     
-    if (currentSearchMode === 'ai') {
+    const isAiMode = currentSearchMode === 'ai';
+    const hasExistingAiView = Boolean(
+        currentConversationId ||
+        document.getElementById('ai-stream-container')
+    );
+    
+    if (!isAiMode || !hasExistingAiView) {
+        clearResults();
+    }
+    
+    if (isAiMode) {
         clearAISearchInput();
         await performStreamingSearch(query);
         return;
