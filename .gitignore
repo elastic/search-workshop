@@ -28,6 +28,10 @@ build/
 # Rust artifacts
 /cli-rust/target/
 
+# Node/JS artifacts
+/cli-js/node_modules/
+/cli-js/.npmrc
+
 # Go artifacts
 /cli-go/import_flights
 /cli-go/.gocache

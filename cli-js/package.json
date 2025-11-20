@@ -1,0 +1,19 @@
+{
+  "name": "import-flights",
+  "version": "1.0.0",
+  "description": "Import flight data into Elasticsearch",
+  "main": "import_flights.js",
+  "type": "module",
+  "scripts": {
+    "start": "node import_flights.js"
+  },
+  "keywords": ["elasticsearch", "flights", "import"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@elastic/elasticsearch": "^8.19.0",
+    "commander": "^11.1.0",
+    "csv-parse": "^5.5.3",
+    "js-yaml": "^4.1.0"
+  }
+}

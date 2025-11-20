@@ -7,6 +7,7 @@ PYTHON_CLI_DIR="$PROJECT_ROOT/cli-python"
 RUBY_CLI_DIR="$PROJECT_ROOT/cli-ruby"
 GO_CLI_DIR="$PROJECT_ROOT/cli-go"
 RUST_CLI_DIR="$PROJECT_ROOT/cli-rust"
+JS_CLI_DIR="$PROJECT_ROOT/cli-js"
 PYTHON_VENV_DIR="$PYTHON_CLI_DIR/venv"
 MAPPING_FILE="$PROJECT_ROOT/config/mappings-flights.json"
 CONFIG_FILE="$PROJECT_ROOT/config/elasticsearch.yml"
@@ -27,23 +28,87 @@ if [ ! -f "$DATA_FILE" ]; then
   exit 1
 fi
 
-# Randomly select between Ruby, Python, Go, and Rust clients
-RANDOM_CHOICE=$((RANDOM % 4))
-if [ $RANDOM_CHOICE -eq 0 ]; then
-  SELECTED_CLIENT="ruby"
-  CLIENT_SCRIPT="$RUBY_CLI_DIR/import_flights.rb"
-elif [ $RANDOM_CHOICE -eq 1 ]; then
-  SELECTED_CLIENT="python"
-  CLIENT_SCRIPT="$PYTHON_CLI_DIR/import_flights.py"
-elif [ $RANDOM_CHOICE -eq 2 ]; then
-  SELECTED_CLIENT="go"
-  CLIENT_SCRIPT="$GO_CLI_DIR/import_flights"
-else
-  SELECTED_CLIENT="rust"
-  CLIENT_SCRIPT="$RUST_CLI_DIR/target/release/import_flights"
+# Parse command-line arguments for --client flag
+SELECTED_CLIENT=""
+PASSTHROUGH=()
+CLIENT_SPECIFIED=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --client=*)
+      SELECTED_CLIENT="${arg#*=}"
+      CLIENT_SPECIFIED=true
+      ;;
+    --client)
+      # Handle --client as next argument
+      CLIENT_SPECIFIED=true
+      ;;
+    *)
+      if [ "$CLIENT_SPECIFIED" = true ] && [ -z "$SELECTED_CLIENT" ]; then
+        SELECTED_CLIENT="$arg"
+        CLIENT_SPECIFIED=false
+      else
+        PASSTHROUGH+=("$arg")
+      fi
+      ;;
+  esac
+done
+
+# Validate client if specified
+if [ -n "$SELECTED_CLIENT" ]; then
+  case "$SELECTED_CLIENT" in
+    ruby|python|go|rust|javascript|js)
+      # Normalize "js" to "javascript"
+      if [ "$SELECTED_CLIENT" = "js" ]; then
+        SELECTED_CLIENT="javascript"
+      fi
+      ;;
+    *)
+      echo "Error: Invalid client '$SELECTED_CLIENT'. Must be one of: ruby, python, go, rust, javascript (or js)" >&2
+      exit 1
+      ;;
+  esac
 fi
 
-echo "Randomly selected client: $SELECTED_CLIENT"
+# Select client (randomly if not specified)
+if [ -z "$SELECTED_CLIENT" ]; then
+  # Randomly select between Ruby, Python, Go, Rust, and JavaScript clients
+  RANDOM_CHOICE=$((RANDOM % 5))
+  if [ $RANDOM_CHOICE -eq 0 ]; then
+    SELECTED_CLIENT="ruby"
+  elif [ $RANDOM_CHOICE -eq 1 ]; then
+    SELECTED_CLIENT="python"
+  elif [ $RANDOM_CHOICE -eq 2 ]; then
+    SELECTED_CLIENT="go"
+  elif [ $RANDOM_CHOICE -eq 3 ]; then
+    SELECTED_CLIENT="rust"
+  else
+    SELECTED_CLIENT="javascript"
+  fi
+  echo "Randomly selected client: $SELECTED_CLIENT"
+else
+  echo "Using specified client: $SELECTED_CLIENT"
+fi
+
+# Set CLIENT_SCRIPT based on selected client
+case "$SELECTED_CLIENT" in
+  ruby)
+    CLIENT_SCRIPT="$RUBY_CLI_DIR/import_flights.rb"
+    ;;
+  python)
+    CLIENT_SCRIPT="$PYTHON_CLI_DIR/import_flights.py"
+    ;;
+  go)
+    CLIENT_SCRIPT="$GO_CLI_DIR/import_flights"
+    ;;
+  rust)
+    CLIENT_SCRIPT="$RUST_CLI_DIR/target/release/import_flights"
+    ;;
+  javascript)
+    CLIENT_SCRIPT="$JS_CLI_DIR/import_flights.js"
+    ;;
+esac
+
 echo "$CLIENT_SCRIPT"
 
 if [ "$SELECTED_CLIENT" = "ruby" ]; then
@@ -57,7 +122,6 @@ if [ "$SELECTED_CLIENT" = "ruby" ]; then
 
   DEFAULT_ARGS=(--file "$DATA_FILE")
 
-  PASSTHROUGH=("$@")
   if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
     for arg in "${PASSTHROUGH[@]}"; do
       case "$arg" in
@@ -94,7 +158,6 @@ elif [ "$SELECTED_CLIENT" = "python" ]; then
 
   DEFAULT_ARGS=(--file "$DATA_FILE")
 
-  PASSTHROUGH=("$@")
   if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
     for arg in "${PASSTHROUGH[@]}"; do
       case "$arg" in
@@ -123,7 +186,6 @@ elif [ "$SELECTED_CLIENT" = "go" ]; then
 
   DEFAULT_ARGS=(--file "$DATA_FILE")
 
-  PASSTHROUGH=("$@")
   if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
     for arg in "${PASSTHROUGH[@]}"; do
       case "$arg" in
@@ -141,7 +203,7 @@ elif [ "$SELECTED_CLIENT" = "go" ]; then
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   ./import_flights --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
-else
+elif [ "$SELECTED_CLIENT" = "rust" ]; then
   cd "$RUST_CLI_DIR"
 
   # Build Rust executable if needed
@@ -152,7 +214,6 @@ else
 
   DEFAULT_ARGS=(--file "$DATA_FILE")
 
-  PASSTHROUGH=("$@")
   if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
     for arg in "${PASSTHROUGH[@]}"; do
       case "$arg" in
@@ -170,4 +231,32 @@ else
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+else
+  cd "$JS_CLI_DIR"
+
+  # Install Node.js dependencies if needed
+  if [ ! -d "node_modules" ]; then
+    echo "Installing JavaScript dependencies..."
+    npm install
+  fi
+
+  DEFAULT_ARGS=(--file "$DATA_FILE")
+
+  if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
+    for arg in "${PASSTHROUGH[@]}"; do
+      case "$arg" in
+      --status | --delete-index | --help | -h)
+        DEFAULT_ARGS=()
+        break
+        ;;
+      esac
+    done
+  fi
+
+  # Use conditional expansion to avoid "unbound variable" error when arrays are empty
+  ARGS=()
+  [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
+  [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
+
+  node import_flights.js --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
 fi
