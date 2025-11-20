@@ -24,3 +24,7 @@ env/
 *.egg
 dist/
 build/
+
+# Go artifacts
+/cli-go/import_flights
+/cli-go/.gocache

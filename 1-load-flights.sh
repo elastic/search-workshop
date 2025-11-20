@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 PYTHON_CLI_DIR="$PROJECT_ROOT/cli-python"
 RUBY_CLI_DIR="$PROJECT_ROOT/cli-ruby"
+GO_CLI_DIR="$PROJECT_ROOT/cli-go"
 PYTHON_VENV_DIR="$PYTHON_CLI_DIR/venv"
 MAPPING_FILE="$PROJECT_ROOT/config/mappings-flights.json"
 CONFIG_FILE="$PROJECT_ROOT/config/elasticsearch.yml"
@@ -25,13 +26,17 @@ if [ ! -f "$DATA_FILE" ]; then
   exit 1
 fi
 
-# Randomly select between Ruby and Python clients
-if [ $((RANDOM % 2)) -eq 0 ]; then
+# Randomly select between Ruby, Python, and Go clients
+RANDOM_CHOICE=$((RANDOM % 3))
+if [ $RANDOM_CHOICE -eq 0 ]; then
   SELECTED_CLIENT="ruby"
   CLIENT_SCRIPT="$RUBY_CLI_DIR/import_flights.rb"
-else
+elif [ $RANDOM_CHOICE -eq 1 ]; then
   SELECTED_CLIENT="python"
   CLIENT_SCRIPT="$PYTHON_CLI_DIR/import_flights.py"
+else
+  SELECTED_CLIENT="go"
+  CLIENT_SCRIPT="$GO_CLI_DIR/import_flights"
 fi
 
 echo "Randomly selected client: $SELECTED_CLIENT"
@@ -66,7 +71,7 @@ if [ "$SELECTED_CLIENT" = "ruby" ]; then
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   bundle exec ruby import_flights.rb --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
-else
+elif [ "$SELECTED_CLIENT" = "python" ]; then
   cd "$PYTHON_CLI_DIR"
 
   if [ ! -d "$PYTHON_VENV_DIR" ]; then
@@ -103,4 +108,33 @@ else
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   python3 import_flights.py --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+else
+  cd "$GO_CLI_DIR"
+
+  # Build Go executable if needed
+  if [ ! -f "$CLIENT_SCRIPT" ]; then
+    echo "Building Go executable..."
+    go build -o import_flights
+  fi
+
+  DEFAULT_ARGS=(--file "$DATA_FILE")
+
+  PASSTHROUGH=("$@")
+  if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
+    for arg in "${PASSTHROUGH[@]}"; do
+      case "$arg" in
+      --status | --delete-index | --help | -h)
+        DEFAULT_ARGS=()
+        break
+        ;;
+      esac
+    done
+  fi
+
+  # Use conditional expansion to avoid "unbound variable" error when arrays are empty
+  ARGS=()
+  [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
+  [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
+
+  ./import_flights --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
 fi
