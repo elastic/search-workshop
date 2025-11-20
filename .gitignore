@@ -35,3 +35,7 @@ build/
 # Go artifacts
 /cli-go/import_flights
 /cli-go/.gocache
+
+# PHP/Composer artifacts
+/cli-php/vendor/
+/cli-php/composer.lock

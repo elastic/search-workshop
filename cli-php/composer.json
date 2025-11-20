@@ -1,0 +1,23 @@
+{
+    "name": "elasticsearch-workshop/cli-php",
+    "description": "PHP CLI tools for importing flight data into Elasticsearch",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "elasticsearch/elasticsearch": "^8.0",
+        "symfony/yaml": "^6.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "ElasticsearchWorkshop\\": "src/"
+        }
+    },
+    "bin": [
+        "import_flights.php"
+    ],
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
+    }
+}

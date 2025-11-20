@@ -8,6 +8,7 @@ RUBY_CLI_DIR="$PROJECT_ROOT/cli-ruby"
 GO_CLI_DIR="$PROJECT_ROOT/cli-go"
 RUST_CLI_DIR="$PROJECT_ROOT/cli-rust"
 JS_CLI_DIR="$PROJECT_ROOT/cli-js"
+PHP_CLI_DIR="$PROJECT_ROOT/cli-php"
 PYTHON_VENV_DIR="$PYTHON_CLI_DIR/venv"
 MAPPING_FILE="$PROJECT_ROOT/config/mappings-flights.json"
 CONFIG_FILE="$PROJECT_ROOT/config/elasticsearch.yml"
@@ -57,14 +58,14 @@ done
 # Validate client if specified
 if [ -n "$SELECTED_CLIENT" ]; then
   case "$SELECTED_CLIENT" in
-    ruby|python|go|rust|javascript|js)
+    ruby|python|go|rust|javascript|js|php)
       # Normalize "js" to "javascript"
       if [ "$SELECTED_CLIENT" = "js" ]; then
         SELECTED_CLIENT="javascript"
       fi
       ;;
     *)
-      echo "Error: Invalid client '$SELECTED_CLIENT'. Must be one of: ruby, python, go, rust, javascript (or js)" >&2
+      echo "Error: Invalid client '$SELECTED_CLIENT'. Must be one of: ruby, python, go, rust, javascript (or js), php" >&2
       exit 1
       ;;
   esac
@@ -72,8 +73,8 @@ fi
 
 # Select client (randomly if not specified)
 if [ -z "$SELECTED_CLIENT" ]; then
-  # Randomly select between Ruby, Python, Go, Rust, and JavaScript clients
-  RANDOM_CHOICE=$((RANDOM % 5))
+  # Randomly select between Ruby, Python, Go, Rust, JavaScript, and PHP clients
+  RANDOM_CHOICE=$((RANDOM % 6))
   if [ $RANDOM_CHOICE -eq 0 ]; then
     SELECTED_CLIENT="ruby"
   elif [ $RANDOM_CHOICE -eq 1 ]; then
@@ -82,8 +83,10 @@ if [ -z "$SELECTED_CLIENT" ]; then
     SELECTED_CLIENT="go"
   elif [ $RANDOM_CHOICE -eq 3 ]; then
     SELECTED_CLIENT="rust"
-  else
+  elif [ $RANDOM_CHOICE -eq 4 ]; then
     SELECTED_CLIENT="javascript"
+  else
+    SELECTED_CLIENT="php"
   fi
   echo "Randomly selected client: $SELECTED_CLIENT"
 else
@@ -106,6 +109,9 @@ case "$SELECTED_CLIENT" in
     ;;
   javascript)
     CLIENT_SCRIPT="$JS_CLI_DIR/import_flights.js"
+    ;;
+  php)
+    CLIENT_SCRIPT="$PHP_CLI_DIR/import_flights.php"
     ;;
 esac
 
@@ -231,7 +237,7 @@ elif [ "$SELECTED_CLIENT" = "rust" ]; then
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
-else
+elif [ "$SELECTED_CLIENT" = "javascript" ]; then
   cd "$JS_CLI_DIR"
 
   # Install Node.js dependencies if needed
@@ -259,4 +265,32 @@ else
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   node import_flights.js --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+elif [ "$SELECTED_CLIENT" = "php" ]; then
+  cd "$PHP_CLI_DIR"
+
+  # Install PHP dependencies if needed
+  if [ ! -f "vendor/autoload.php" ]; then
+    echo "Installing PHP dependencies..."
+    composer install
+  fi
+
+  DEFAULT_ARGS=(--file "$DATA_FILE")
+
+  if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
+    for arg in "${PASSTHROUGH[@]}"; do
+      case "$arg" in
+      --status | --delete-index | --help | -h)
+        DEFAULT_ARGS=()
+        break
+        ;;
+      esac
+    done
+  fi
+
+  # Use conditional expansion to avoid "unbound variable" error when arrays are empty
+  ARGS=()
+  [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
+  [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
+
+  php import_flights.php --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
 fi
