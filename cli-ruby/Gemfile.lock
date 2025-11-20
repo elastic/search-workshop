@@ -1,6 +1,7 @@
 GEM
   remote: https://rubygems.org/
   specs:
+    csv (3.3.5)
     elastic-transport (8.4.1)
       faraday (< 3)
       multi_json
@@ -27,6 +28,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  csv
   elasticsearch (~> 8.0)
 
 BUNDLED WITH
