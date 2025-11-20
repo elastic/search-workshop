@@ -25,6 +25,9 @@ env/
 dist/
 build/
 
+# Rust artifacts
+/cli-rust/target/
+
 # Go artifacts
 /cli-go/import_flights
 /cli-go/.gocache

@@ -6,6 +6,7 @@ PROJECT_ROOT="$SCRIPT_DIR"
 PYTHON_CLI_DIR="$PROJECT_ROOT/cli-python"
 RUBY_CLI_DIR="$PROJECT_ROOT/cli-ruby"
 GO_CLI_DIR="$PROJECT_ROOT/cli-go"
+RUST_CLI_DIR="$PROJECT_ROOT/cli-rust"
 PYTHON_VENV_DIR="$PYTHON_CLI_DIR/venv"
 MAPPING_FILE="$PROJECT_ROOT/config/mappings-flights.json"
 CONFIG_FILE="$PROJECT_ROOT/config/elasticsearch.yml"
@@ -26,17 +27,20 @@ if [ ! -f "$DATA_FILE" ]; then
   exit 1
 fi
 
-# Randomly select between Ruby, Python, and Go clients
-RANDOM_CHOICE=$((RANDOM % 3))
+# Randomly select between Ruby, Python, Go, and Rust clients
+RANDOM_CHOICE=$((RANDOM % 4))
 if [ $RANDOM_CHOICE -eq 0 ]; then
   SELECTED_CLIENT="ruby"
   CLIENT_SCRIPT="$RUBY_CLI_DIR/import_flights.rb"
 elif [ $RANDOM_CHOICE -eq 1 ]; then
   SELECTED_CLIENT="python"
   CLIENT_SCRIPT="$PYTHON_CLI_DIR/import_flights.py"
-else
+elif [ $RANDOM_CHOICE -eq 2 ]; then
   SELECTED_CLIENT="go"
   CLIENT_SCRIPT="$GO_CLI_DIR/import_flights"
+else
+  SELECTED_CLIENT="rust"
+  CLIENT_SCRIPT="$RUST_CLI_DIR/target/release/import_flights"
 fi
 
 echo "Randomly selected client: $SELECTED_CLIENT"
@@ -108,7 +112,7 @@ elif [ "$SELECTED_CLIENT" = "python" ]; then
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   python3 import_flights.py --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
-else
+elif [ "$SELECTED_CLIENT" = "go" ]; then
   cd "$GO_CLI_DIR"
 
   # Build Go executable if needed
@@ -137,4 +141,33 @@ else
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   ./import_flights --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+else
+  cd "$RUST_CLI_DIR"
+
+  # Build Rust executable if needed
+  if [ ! -f "$CLIENT_SCRIPT" ]; then
+    echo "Building Rust executable..."
+    cargo build --release
+  fi
+
+  DEFAULT_ARGS=(--file "$DATA_FILE")
+
+  PASSTHROUGH=("$@")
+  if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
+    for arg in "${PASSTHROUGH[@]}"; do
+      case "$arg" in
+      --status | --delete-index | --help | -h)
+        DEFAULT_ARGS=()
+        break
+        ;;
+      esac
+    done
+  fi
+
+  # Use conditional expansion to avoid "unbound variable" error when arrays are empty
+  ARGS=()
+  [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
+  [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
+
+  "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
 fi
