@@ -39,3 +39,12 @@ build/
 # PHP/Composer artifacts
 /cli-php/vendor/
 /cli-php/composer.lock
+
+# Java/Maven artifacts
+/cli-java/target/
+*.class
+*.jar
+*.war
+*.ear
+.idea/
+*.iml

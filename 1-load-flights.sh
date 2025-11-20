@@ -9,6 +9,7 @@ GO_CLI_DIR="$PROJECT_ROOT/cli-go"
 RUST_CLI_DIR="$PROJECT_ROOT/cli-rust"
 JS_CLI_DIR="$PROJECT_ROOT/cli-js"
 PHP_CLI_DIR="$PROJECT_ROOT/cli-php"
+JAVA_CLI_DIR="$PROJECT_ROOT/cli-java"
 PYTHON_VENV_DIR="$PYTHON_CLI_DIR/venv"
 MAPPING_FILE="$PROJECT_ROOT/config/mappings-flights.json"
 CONFIG_FILE="$PROJECT_ROOT/config/elasticsearch.yml"
@@ -58,14 +59,14 @@ done
 # Validate client if specified
 if [ -n "$SELECTED_CLIENT" ]; then
   case "$SELECTED_CLIENT" in
-    ruby|python|go|rust|javascript|js|php)
+    ruby|python|go|rust|javascript|js|php|java)
       # Normalize "js" to "javascript"
       if [ "$SELECTED_CLIENT" = "js" ]; then
         SELECTED_CLIENT="javascript"
       fi
       ;;
     *)
-      echo "Error: Invalid client '$SELECTED_CLIENT'. Must be one of: ruby, python, go, rust, javascript (or js), php" >&2
+      echo "Error: Invalid client '$SELECTED_CLIENT'. Must be one of: ruby, python, go, rust, javascript (or js), php, java" >&2
       exit 1
       ;;
   esac
@@ -73,8 +74,8 @@ fi
 
 # Select client (randomly if not specified)
 if [ -z "$SELECTED_CLIENT" ]; then
-  # Randomly select between Ruby, Python, Go, Rust, JavaScript, and PHP clients
-  RANDOM_CHOICE=$((RANDOM % 6))
+  # Randomly select between Ruby, Python, Go, Rust, JavaScript, PHP, and Java clients
+  RANDOM_CHOICE=$((RANDOM % 7))
   if [ $RANDOM_CHOICE -eq 0 ]; then
     SELECTED_CLIENT="ruby"
   elif [ $RANDOM_CHOICE -eq 1 ]; then
@@ -85,8 +86,10 @@ if [ -z "$SELECTED_CLIENT" ]; then
     SELECTED_CLIENT="rust"
   elif [ $RANDOM_CHOICE -eq 4 ]; then
     SELECTED_CLIENT="javascript"
-  else
+  elif [ $RANDOM_CHOICE -eq 5 ]; then
     SELECTED_CLIENT="php"
+  else
+    SELECTED_CLIENT="java"
   fi
   echo "Randomly selected client: $SELECTED_CLIENT"
 else
@@ -112,6 +115,9 @@ case "$SELECTED_CLIENT" in
     ;;
   php)
     CLIENT_SCRIPT="$PHP_CLI_DIR/import_flights.php"
+    ;;
+  java)
+    CLIENT_SCRIPT="$JAVA_CLI_DIR/target/import-flights-1.0.0.jar"
     ;;
 esac
 
@@ -293,4 +299,32 @@ elif [ "$SELECTED_CLIENT" = "php" ]; then
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   php import_flights.php --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+elif [ "$SELECTED_CLIENT" = "java" ]; then
+  cd "$JAVA_CLI_DIR"
+
+  # Build Java JAR if needed
+  if [ ! -f "$CLIENT_SCRIPT" ]; then
+    echo "Building Java JAR..."
+    mvn clean package
+  fi
+
+  DEFAULT_ARGS=(--file "$DATA_FILE")
+
+  if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
+    for arg in "${PASSTHROUGH[@]}"; do
+      case "$arg" in
+      --status | --delete-index | --help | -h)
+        DEFAULT_ARGS=()
+        break
+        ;;
+      esac
+    done
+  fi
+
+  # Use conditional expansion to avoid "unbound variable" error when arrays are empty
+  ARGS=()
+  [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
+  [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
+
+  java -jar "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
 fi
