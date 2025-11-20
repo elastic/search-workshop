@@ -6,25 +6,41 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import csv
 import glob
 import gzip
 import io
 import json
 import logging
-import os
+import re
 import shlex
-import ssl
 import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
-from urllib import error as urllib_error
-from urllib import parse as urllib_parse
-from urllib import request as urllib_request
+
+try:
+    from elasticsearch import Elasticsearch
+    # Disable Elasticsearch client HTTP request logging immediately (matches Ruby's log: false)
+    # Create a null handler to completely suppress logging
+    null_handler = logging.NullHandler()
+    for logger_name in [
+        "elasticsearch",
+        "elasticsearch.transport",
+        "elasticsearch.trace",
+        "elastic_transport",
+        "elastic_transport.transport",
+        "urllib3",
+        "urllib3.connectionpool",
+    ]:
+        logger = logging.getLogger(logger_name)
+        logger.addHandler(null_handler)
+        logger.setLevel(logging.CRITICAL)
+        logger.propagate = False
+except ImportError:  # pragma: no cover - handled at runtime
+    Elasticsearch = None
 
 try:
     import yaml  # type: ignore
@@ -33,7 +49,7 @@ except ImportError:  # pragma: no cover - handled at runtime
 
 
 LOGGER = logging.getLogger(__name__)
-BATCH_SIZE = 1_000
+BATCH_SIZE = 500
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = SCRIPT_DIR.parent / "config" / "elasticsearch.yml"
 DEFAULT_MAPPING_PATH = SCRIPT_DIR.parent / "config" / "mappings-flights.json"
@@ -66,17 +82,6 @@ def load_json(path: Path) -> Dict[str, object]:
     if not isinstance(data, dict):
         raise ValueError(f"Mapping file must define a JSON object (found {type(data).__name__})")
     return data
-
-
-def combine_paths(base_path: str, new_path: str) -> str:
-    base = base_path.rstrip("/")
-    suffix = new_path.lstrip("/")
-    if not base:
-        return f"/{suffix}" if not suffix.startswith("/") else suffix
-    if not suffix:
-        return base if base.startswith("/") else f"/{base}"
-    combined = f"{base}/{suffix}"
-    return combined if combined.startswith("/") else f"/{combined}"
 
 
 @dataclass
@@ -130,144 +135,33 @@ class ElasticsearchConfig:
         )
 
 
-class ElasticsearchClient:
-    def __init__(self, config: ElasticsearchConfig):
-        parsed = urllib_parse.urlparse(config.endpoint)
-        if not parsed.scheme or not parsed.netloc:
-            raise ValueError(f"Invalid Elasticsearch endpoint: {config.endpoint}")
-
-        self._base = parsed
-        base_path = parsed.path or ""
-        self._base_path = "" if base_path in {"", "/"} else base_path.rstrip("/")
-        self._headers = dict(config.headers)
-        self._user = config.user
-        self._password = config.password
-        self._api_key = config.api_key
-        self._ssl_context = self._build_ssl_context(
-            parsed.scheme, config.ssl_verify, config.ca_file, config.ca_path
+def create_elasticsearch_client(config: ElasticsearchConfig) -> Elasticsearch:
+    """Create an Elasticsearch client from configuration."""
+    if Elasticsearch is None:
+        raise RuntimeError(
+            "Elasticsearch client is required. Install with 'pip install elasticsearch'."
         )
 
-    @staticmethod
-    def _build_ssl_context(
-        scheme: str, verify: bool, ca_file: Optional[str], ca_path: Optional[str]
-    ) -> Optional[ssl.SSLContext]:
-        if scheme != "https":
-            return None
+    # Build client configuration
+    client_kwargs: Dict[str, object] = {
+        "hosts": [config.endpoint],
+        "verify_certs": config.ssl_verify,
+        "headers": config.headers,
+    }
 
-        if not verify:
-            return ssl._create_unverified_context()
+    # Handle authentication
+    if config.api_key:
+        client_kwargs["api_key"] = config.api_key
+    elif config.user and config.password:
+        client_kwargs["basic_auth"] = (config.user, config.password)
 
-        try:
-            context = ssl.create_default_context(cafile=ca_file, capath=ca_path)
-        except ssl.SSLError as exc:  # pragma: no cover - depends on system
-            raise RuntimeError(f"Failed to build SSL context: {exc}") from exc
-        return context
+    # Handle SSL certificate files
+    if config.ca_file:
+        client_kwargs["ca_certs"] = config.ca_file
+    elif config.ca_path:
+        client_kwargs["ca_certs"] = config.ca_path
 
-    def index_exists(self, name: str) -> bool:
-        status, _, _ = self._request("HEAD", f"/{name}")
-        return 200 <= status < 300
-
-    def create_index(self, name: str, mapping: Dict[str, object]) -> None:
-        status, body, _ = self._request(
-            "PUT",
-            f"/{name}",
-            body=json.dumps(mapping).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        if 200 <= status < 300:
-            LOGGER.info("Index '%s' created", name)
-            return
-        if status == 409:
-            LOGGER.warning("Index '%s' already exists (conflict)", name)
-            return
-        raise RuntimeError(f"Index creation failed ({status}): {body.decode('utf-8', 'ignore')}")
-
-    def bulk(self, index: str, payload: bytes, refresh: bool) -> Dict[str, object]:
-        # When _index is specified in action lines, use global _bulk endpoint
-        # The index parameter is kept for backward compatibility but ignored when _index is in payload
-        params = {"refresh": "true" if refresh else "false"}
-        status, body, _ = self._request(
-            "POST",
-            "/_bulk",
-            body=payload,
-            headers={"Content-Type": "application/x-ndjson"},
-            params=params,
-        )
-        if not (200 <= status < 300):
-            raise RuntimeError(f"Bulk request failed ({status}): {body.decode('utf-8', 'ignore')}")
-        try:
-            return json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Failed to parse bulk response JSON: {exc}") from exc
-
-    def cluster_health(self) -> Dict[str, object]:
-        status, body, _ = self._request("GET", "/_cluster/health")
-        if not (200 <= status < 300):
-            raise RuntimeError(f"Cluster health request failed ({status}): {body.decode('utf-8', 'ignore')}")
-        try:
-            return json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Failed to parse cluster health JSON: {exc}") from exc
-
-    def delete_index(self, name: str) -> bool:
-        status, body, _ = self._request("DELETE", f"/{name}")
-        if 200 <= status < 300:
-            return True
-        if status == 404:
-            return False
-        raise RuntimeError(f"Index deletion failed ({status}): {body.decode('utf-8', 'ignore')}")
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        body: Optional[bytes] = None,
-        headers: Optional[Dict[str, str]] = None,
-        params: Optional[Dict[str, str]] = None,
-        timeout: int = 30,
-    ) -> Tuple[int, bytes, Dict[str, str]]:
-        target_path = combine_paths(self._base_path, path)
-        url = self._build_url(target_path, params)
-
-        request_headers = dict(self._headers)
-        if headers:
-            request_headers.update(headers)
-
-        auth_header = self._build_auth_header()
-        if auth_header:
-            request_headers["Authorization"] = auth_header
-
-        data = body
-        req = urllib_request.Request(url, data=data, method=method.upper())
-        for key, value in request_headers.items():
-            req.add_header(key, value)
-        if data is not None and "Content-Length" not in req.headers:
-            req.add_header("Content-Length", str(len(data)))
-
-        try:
-            with urllib_request.urlopen(req, timeout=timeout, context=self._ssl_context) as response:
-                status = response.getcode()
-                payload = response.read()
-                return status, payload, dict(response.headers.items())
-        except urllib_error.HTTPError as exc:
-            return exc.code, exc.read(), dict(exc.headers.items() if exc.headers else {})
-        except urllib_error.URLError as exc:
-            raise RuntimeError(f"HTTP request failed: {exc}") from exc
-
-    def _build_url(self, path: str, params: Optional[Dict[str, str]]) -> str:
-        query = urllib_parse.urlencode(params or {})
-        merged = self._base._replace(path=path, query=query)
-        return urllib_parse.urlunparse(merged)
-
-    def _build_auth_header(self) -> Optional[str]:
-        if self._api_key:
-            return f"ApiKey {self._api_key}"
-        if self._user and self._password:
-            token = f"{self._user}:{self._password}"
-            encoded = base64.b64encode(token.encode("utf-8")).decode("ascii")
-            return f"Basic {encoded}"
-        return None
+    return Elasticsearch(**client_kwargs)
 
 
 class AirportLookup:
@@ -359,7 +253,7 @@ class CancellationLookup:
 class FlightLoader:
     def __init__(
         self,
-        client: ElasticsearchClient,
+        client: Elasticsearch,
         mapping: Dict[str, object],
         index: str,
         *,
@@ -377,6 +271,7 @@ class FlightLoader:
         self._cancellation_lookup = CancellationLookup(cancellations_file, LOGGER)
         self._total_records = 0
         self._loaded_records = 0
+        self._ensured_indices: set[str] = set()  # Track which indices we've already ensured
 
     def import_files(self, files: Iterable[Path]) -> None:
         file_list = list(files)
@@ -402,18 +297,12 @@ class FlightLoader:
             LOGGER.warning("Skipping %s (not a regular file)", file_path)
             return
 
-        # Extract index name from filename (remove .csv.gz, .csv, .zip extensions)
-        index_name = self._extract_index_name_from_filename(file_path)
-        LOGGER.info("Importing %s into index %s", file_path, index_name)
-        
-        # Ensure index exists
-        self._ensure_index(index_name)
+        file_year, file_month = self._extract_year_month_from_filename(file_path)
+        LOGGER.info("Importing %s", file_path)
 
-        buffered_lines: List[str] = []
-        buffered_docs = 0
+        index_buffers: Dict[str, Dict[str, object]] = {}
         indexed_docs = 0
         processed_rows = 0
-        batch_number = 0
 
         for row in self._iter_rows(file_path):
             processed_rows += 1
@@ -421,21 +310,43 @@ class FlightLoader:
             if not doc:
                 continue
 
-            buffered_lines.append(json.dumps({"index": {"_index": index_name}}))
-            buffered_lines.append(json.dumps(doc, ensure_ascii=False))
-            buffered_docs += 1
+            timestamp = doc.get("@timestamp")
+            index_name = self._extract_index_name(
+                timestamp, file_year=file_year, file_month=file_month
+            )
+            if not index_name:
+                timestamp_raw = row.get("@timestamp") or row.get("FlightDate")
+                LOGGER.warning(
+                    "Skipping document - missing or invalid timestamp. Raw value: %s, parsed timestamp: %s. "
+                    "Row %s: Origin=%s, Dest=%s, Airline=%s",
+                    repr(timestamp_raw),
+                    repr(timestamp),
+                    processed_rows,
+                    row.get("Origin"),
+                    row.get("Dest"),
+                    row.get("Reporting_Airline"),
+                )
+                continue
 
-            if buffered_docs >= self._batch_size:
-                batch_number += 1
-                docs_in_batch = self._flush(buffered_lines, index_name)
-                indexed_docs += docs_in_batch
-                buffered_lines.clear()
-                buffered_docs = 0
+            doc = {key: value for key, value in doc.items() if value is not None}
+            if not doc:
+                continue
 
-        if buffered_docs:
-            batch_number += 1
-            docs_in_batch = self._flush(buffered_lines, index_name)
-            indexed_docs += docs_in_batch
+            self._ensure_index(index_name)
+
+            buffer = index_buffers.setdefault(index_name, {"lines": [], "count": 0})
+            buffer["lines"].append(json.dumps({"index": {"_index": index_name}}))
+            buffer["lines"].append(json.dumps(doc, ensure_ascii=False))
+            buffer["count"] += 1
+
+            if buffer["count"] >= self._batch_size:
+                indexed_docs += self._flush(buffer["lines"], index_name)
+                buffer["lines"].clear()
+                buffer["count"] = 0
+
+        for index_name, buffer in index_buffers.items():
+            if buffer["count"]:
+                indexed_docs += self._flush(buffer["lines"], index_name)
 
         LOGGER.info(
             "Finished %s (rows processed: %s, documents indexed: %s)",
@@ -469,29 +380,71 @@ class FlightLoader:
                     yield row
 
     def _ensure_index(self, index_name: str) -> None:
-        """Ensure an index exists, creating it if necessary."""
-        if self._client.index_exists(index_name):
-            LOGGER.info("Index '%s' already exists", index_name)
+        """Ensure an index exists, creating it if necessary. Deletes existing index first."""
+        # If we've already ensured this index in this session, skip
+        if index_name in self._ensured_indices:
+            LOGGER.debug("Index '%s' already ensured in this session", index_name)
             return
+        
+        # Delete index if it exists before creating a new one
+        try:
+            if self._client.indices.exists(index=index_name):
+                LOGGER.info("Deleting existing index '%s' before import", index_name)
+                self._client.indices.delete(index=index_name)
+                LOGGER.info("Index '%s' deleted", index_name)
+        except Exception as exc:
+            # NotFoundError (404) is expected if index doesn't exist
+            error_str = str(exc).lower()
+            if "notfound" not in error_str and "404" not in error_str:
+                LOGGER.warning("Failed to delete index '%s': %s", index_name, exc)
+        
         LOGGER.info("Creating index: %s", index_name)
-        self._client.create_index(index_name, self._mapping)
+        try:
+            # Try using body parameter (works for full index definition)
+            self._client.indices.create(index=index_name, body=self._mapping)
+            LOGGER.info("Index '%s' created", index_name)
+            LOGGER.info("Successfully created index: %s", index_name)
+        except Exception as exc:
+            # Check for resource_already_exists_exception or ConflictError
+            error_str = str(exc).lower()
+            if (
+                "resource_already_exists_exception" in error_str
+                or "already_exists_exception" in error_str
+                or "conflict" in error_str
+                or "400" in error_str
+            ):
+                LOGGER.warning("Index '%s' already exists (conflict)", index_name)
+            else:
+                raise RuntimeError(f"Index creation failed: {exc}") from exc
+        self._ensured_indices.add(index_name)
 
     def _flush(self, lines: List[str], index_name: str) -> int:
+        # Build NDJSON payload for bulk API
         payload = ("\n".join(lines) + "\n").encode("utf-8")
-        result = self._client.bulk(index_name, payload, self._refresh)
+        
+        try:
+            # Use direct bulk API with NDJSON format
+            # The client automatically sets Content-Type for bulk operations
+            result = self._client.bulk(
+                body=payload,
+                refresh=self._refresh,
+            )
+            
+            if result.get("errors"):
+                items = result.get("items", [])
+                errors = [
+                    item.get("index", {}).get("error")
+                    for item in items
+                    if isinstance(item, dict) and item.get("index", {}).get("error")
+                ]
+                for error in errors[:5]:
+                    LOGGER.error("Bulk item error: %s", error)
+                raise RuntimeError("Bulk indexing reported errors; aborting")
+            
+            doc_count = len(lines) // 2
+        except Exception as exc:
+            raise RuntimeError(f"Bulk request failed: {exc}") from exc
 
-        if result.get("errors"):
-            items = result.get("items", [])
-            errors = [
-                item.get("index", {}).get("error")
-                for item in items
-                if isinstance(item, dict) and item.get("index", {}).get("error")
-            ]
-            for error in errors[:5]:
-                LOGGER.error("Bulk item error: %s", error)
-            raise RuntimeError("Bulk indexing reported errors; aborting")
-
-        doc_count = len(lines) // 2
         self._loaded_records += doc_count
         
         if self._total_records > 0:
@@ -578,17 +531,47 @@ class FlightLoader:
         if dest_location:
             doc["DestLocation"] = dest_location
 
-        # Remove None values
-        compacted = {key: value for key, value in doc.items() if value is not None}
-        return compacted
+        return doc
 
-    def _extract_index_name_from_filename(self, file_path: Path) -> str:
-        """Extract index name from filename by removing extensions."""
-        basename = file_path.stem  # Gets filename without extension
-        # Handle multiple extensions like .csv.gz
-        while basename.endswith(('.csv', '.gz', '.zip')):
-            basename = Path(basename).stem
-        return basename
+    def _extract_year_month_from_filename(self, file_path: Path) -> Tuple[Optional[str], Optional[str]]:
+        """Extract year and month hints from filename (e.g., flights-2025-07.csv.gz)."""
+        basename = file_path.name
+        while True:
+            new_basename = re.sub(r"\.(gz|csv|zip)$", "", basename, flags=re.IGNORECASE)
+            if new_basename == basename:
+                break
+            basename = new_basename
+
+        match_year_month = re.search(r"-(\d{4})-(\d{2})$", basename)
+        if match_year_month:
+            return match_year_month.group(1), match_year_month.group(2)
+
+        match_year = re.search(r"-(\d{4})$", basename)
+        if match_year:
+            return match_year.group(1), None
+
+        return None, None
+
+    def _extract_index_name(
+        self, timestamp: Optional[str], *, file_year: Optional[str], file_month: Optional[str]
+    ) -> Optional[str]:
+        """Build index name based on filename hints or timestamp (matches Ruby importer)."""
+        if file_year and file_month:
+            return f"{self._index}-{file_year}-{file_month}"
+
+        if file_year:
+            return f"{self._index}-{file_year}"
+
+        if not timestamp:
+            return None
+
+        match = re.match(r"^(\d{4})-(\d{2})-\d{2}", timestamp)
+        if match:
+            year = match.group(1)
+            return f"{self._index}-{year}"
+
+        LOGGER.warning("Unable to parse timestamp format: %s", timestamp)
+        return None
 
     def _format_number(self, number: int) -> str:
         """Format number with thousands separators."""
@@ -717,9 +700,10 @@ def files_to_process(data_dir: Path, target_file: Optional[str], load_all: bool,
     if load_all:
         zip_files = sorted(data_dir.glob("*.zip"))
         csv_files = sorted(data_dir.glob("*.csv"))
-        files = zip_files + csv_files
+        csv_gz_files = sorted(data_dir.glob("*.csv.gz"))
+        files = zip_files + csv_files + csv_gz_files
         if not files:
-            raise FileNotFoundError(f"No .zip or .csv files found in {data_dir}")
+            raise FileNotFoundError(f"No .zip, .csv, or .csv.gz files found in {data_dir}")
         return files
 
     raise ValueError("Please provide either --file PATH, --all, or --glob PATTERN.")
@@ -773,7 +757,12 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("-a", "--all", action="store_true", help="Import all files found in the data directory")
     parser.add_argument("-g", "--glob", help="Import files matching the glob pattern")
     parser.add_argument("--index", default="flights", help="Override index name (default: flights)")
-    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Number of documents per bulk request (default: 1000)")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
+        help=f"Number of documents per bulk request (default: {BATCH_SIZE})",
+    )
     parser.add_argument("--refresh", action="store_true", help="Request an index refresh after each bulk request")
     parser.add_argument("--status", action="store_true", help="Test connection and print cluster health status")
     parser.add_argument("--delete-index", action="store_true", help="Delete the target index and exit")
@@ -783,6 +772,24 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 
 def configure_logging() -> None:
+    # Ensure Elasticsearch client HTTP request logging is disabled (matches Ruby's log: false)
+    # This is a backup in case the module-level configuration didn't work
+    null_handler = logging.NullHandler()
+    for logger_name in [
+        "elasticsearch",
+        "elasticsearch.transport",
+        "elasticsearch.trace",
+        "elastic_transport",
+        "elastic_transport.transport",
+        "urllib3",
+        "urllib3.connectionpool",
+        "urllib3.util.retry",
+    ]:
+        logger = logging.getLogger(logger_name)
+        logger.addHandler(null_handler)
+        logger.setLevel(logging.CRITICAL)
+        logger.propagate = False
+    
     handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter("%(levelname)s %(message)s")
     handler.setFormatter(formatter)
@@ -792,21 +799,29 @@ def configure_logging() -> None:
     root.handlers[:] = [handler]
 
 
-def report_status(client: ElasticsearchClient) -> None:
-    status = client.cluster_health()
-    LOGGER.info("Cluster status: %s", status.get("status"))
-    LOGGER.info(
-        "Active shards: %s, node count: %s",
-        status.get("active_shards"),
-        status.get("number_of_nodes"),
-    )
+def report_status(client: Elasticsearch) -> None:
+    try:
+        status = client.cluster.health()
+        LOGGER.info("Cluster status: %s", status.get("status"))
+        LOGGER.info(
+            "Active shards: %s, node count: %s",
+            status.get("active_shards"),
+            status.get("number_of_nodes"),
+        )
+    except Exception as exc:
+        LOGGER.error("Failed to retrieve cluster status: %s", exc)
+        raise SystemExit(1) from exc
 
 
-def delete_index(client: ElasticsearchClient, index_name: str) -> None:
-    if client.delete_index(index_name):
-        LOGGER.info("Index '%s' deleted", index_name)
-    else:
-        LOGGER.warning("Index '%s' was not found", index_name)
+def delete_index(client: Elasticsearch, index_name: str) -> None:
+    try:
+        if client.indices.exists(index=index_name):
+            client.indices.delete(index=index_name)
+            LOGGER.info("Index '%s' deleted", index_name)
+        else:
+            LOGGER.warning("Index '%s' was not found", index_name)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to delete index '{index_name}': {exc}") from exc
 
 
 def main(argv: List[str]) -> None:
@@ -842,7 +857,10 @@ def main(argv: List[str]) -> None:
     except Exception as exc:
         raise SystemExit(f"Invalid Elasticsearch config: {exc}") from exc
 
-    client = ElasticsearchClient(es_config)
+    try:
+        client = create_elasticsearch_client(es_config)
+    except Exception as exc:
+        raise SystemExit(f"Failed to create Elasticsearch client: {exc}") from exc
 
     if args.status:
         try:
@@ -907,4 +925,16 @@ def main(argv: List[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    import time
+    start_time = time.perf_counter()
+    try:
+        main(sys.argv[1:])
+    finally:
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+        minutes = int(duration // 60)
+        seconds = duration % 60
+        if minutes > 0:
+            print(f"\nTotal time: {minutes}m {seconds:.2f}s")
+        else:
+            print(f"\nTotal time: {seconds:.2f}s")

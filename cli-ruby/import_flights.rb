@@ -5,16 +5,15 @@ require 'optparse'
 require 'yaml'
 require 'json'
 require 'csv'
-require 'net/http'
-require 'uri'
+require 'elasticsearch'
 require 'logger'
-require 'openssl'
 require 'time'
 require 'open3'
 require 'English'
 require 'zlib'
 require 'set'
 require 'shellwords'
+require 'pathname'
 
 class ElasticsearchClient
   def initialize(config, logger:)
@@ -22,97 +21,63 @@ class ElasticsearchClient
       raise ArgumentError, 'endpoint is required in the Elasticsearch config'
     end
 
-    @base_uri = URI(endpoint)
-    @base_path = @base_uri.path
-    @base_path = '' if @base_path.nil? || @base_path == '/'
+    @endpoint = endpoint
     @logger = logger
-    @headers = (config['headers'] || {}).transform_keys(&:to_s)
-    @user = config['user']
-    @password = config['password']
-    @api_key = config['api_key']
-    @ssl_verify = config.fetch('ssl_verify', true)
-    @ca_file = presence(config['ca_file'])
-    @ca_path = presence(config['ca_path'])
+    @client = build_client(config, endpoint)
   end
 
   def index_exists?(name)
-    response = request(:head, index_path(name))
-    response.is_a?(Net::HTTPSuccess)
-  rescue SocketError, Errno::ECONNREFUSED, Errno::ETIMEDOUT => e
-    raise "Cannot connect to Elasticsearch at #{@base_uri}: #{e.message}. Please check your endpoint configuration and network connectivity."
-  rescue StandardError => e
+    @client.indices.exists(index: name)
+  rescue Elasticsearch::Transport::Transport::Error => e
+    if e.message.include?('Connection refused') || e.message.include?('timeout')
+      raise "Cannot connect to Elasticsearch at #{@endpoint}: #{e.message}. Please check your endpoint configuration and network connectivity."
+    end
     raise "Failed to check index existence: #{e.message}"
   end
 
   def create_index(name, mapping)
-    response = request(
-      :put,
-      index_path(name),
-      body: JSON.dump(mapping),
-      headers: { 'Content-Type' => 'application/json' }
-    )
-
-    case response
-    when Net::HTTPSuccess
-      @logger.info("Index '#{name}' created")
-    when Net::HTTPConflict
-      @logger.warn("Index '#{name}' already exists (conflict)")
-    else
-      raise "Index creation failed: #{response.code} #{response.body}"
+    @client.indices.create(index: name, body: mapping)
+    @logger.info("Index '#{name}' created")
+  rescue Elasticsearch::Transport::Transport::Errors::Conflict => e
+    @logger.warn("Index '#{name}' already exists (conflict)")
+  rescue Elasticsearch::Transport::Transport::Error => e
+    if e.message.include?('Connection refused') || e.message.include?('timeout')
+      raise "Cannot connect to Elasticsearch at #{@endpoint}: #{e.message}. Please check your endpoint configuration and network connectivity."
     end
-  rescue SocketError, Errno::ECONNREFUSED, Errno::ETIMEDOUT => e
-    raise "Cannot connect to Elasticsearch at #{@base_uri}: #{e.message}. Please check your endpoint configuration and network connectivity."
+    raise "Index creation failed: #{e.message}"
   end
 
   def bulk(index, payload, refresh: false)
-    # When _index is specified in action lines, use global _bulk endpoint
+    # The official gem handles bulk operations directly
+    # payload is already in NDJSON format (string)
     # The index parameter is kept for backward compatibility but ignored when _index is in payload
-    bulk_path = '/_bulk'
-    response = request(
-      :post,
-      bulk_path,
-      body: payload,
-      headers: { 'Content-Type' => 'application/x-ndjson' },
-      params: { refresh: refresh ? 'true' : 'false' }
-    )
-
-    unless response.is_a?(Net::HTTPSuccess)
-      raise "Bulk request failed: #{response.code} #{response.body}"
-    end
-
-    JSON.parse(response.body)
+    result = @client.bulk(body: payload, refresh: refresh)
+    result
+  rescue Elasticsearch::Transport::Transport::Error => e
+    raise "Bulk request failed: #{e.message}"
   end
 
   def cluster_health
-    response = request(:get, '/_cluster/health')
-    unless response.is_a?(Net::HTTPSuccess)
-      raise "Cluster health request failed: #{response.code} #{response.body}"
-    end
-
-    JSON.parse(response.body)
+    @client.cluster.health
+  rescue Elasticsearch::Transport::Transport::Error => e
+    raise "Cluster health request failed: #{e.message}"
   end
 
   def delete_index(name)
-    response = request(:delete, index_path(name))
-
-    case response
-    when Net::HTTPSuccess
-      true
-    when Net::HTTPNotFound
-      false
-    else
-      raise "Index deletion failed: #{response.code} #{response.body}"
-    end
+    @client.indices.delete(index: name)
+    true
+  rescue Elasticsearch::Transport::Transport::Errors::NotFound => e
+    false
+  rescue Elasticsearch::Transport::Transport::Error => e
+    raise "Index deletion failed: #{e.message}"
   end
 
   def list_indices(pattern = '*')
-    response = request(:get, '/_cat/indices', params: { format: 'json', index: pattern })
-    
-    unless response.is_a?(Net::HTTPSuccess)
-      raise "Failed to list indices: #{response.code} #{response.body}"
-    end
-
-    JSON.parse(response.body).map { |idx| idx['index'] }.compact
+    response = @client.cat.indices(format: 'json', index: pattern)
+    # The cat API returns an array of hashes
+    response.map { |idx| idx['index'] }.compact
+  rescue Elasticsearch::Transport::Transport::Error => e
+    raise "Failed to list indices: #{e.message}"
   end
 
   def delete_indices_by_pattern(pattern)
@@ -130,61 +95,36 @@ class ElasticsearchClient
 
   private
 
-  def index_path(name)
-    "/#{name}"
-  end
+  def build_client(config, endpoint)
+    client_options = {
+      url: endpoint,
+      log: false # We use our own logger
+    }
 
-  def request(method, path, body: nil, headers: {}, params: nil)
-    uri = build_uri(path, params: params)
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = uri.scheme == 'https'
-    http.verify_mode = @ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE
-    http.ca_file = @ca_file if @ca_file
-    http.ca_path = @ca_path if @ca_path
-
-    request = build_request(method, uri, body, headers)
-
-    http.request(request)
-  end
-
-  def build_request(method, uri, body, headers)
-    request_class = case method.to_sym
-                    when :get then Net::HTTP::Get
-                    when :head then Net::HTTP::Head
-                    when :put then Net::HTTP::Put
-                    when :post then Net::HTTP::Post
-                    when :delete then Net::HTTP::Delete
-                    else
-                      raise ArgumentError, "Unsupported HTTP method: #{method}"
-                    end
-
-    request = request_class.new(uri.request_uri)
-
-    merged_headers = @headers.merge(headers.transform_keys(&:to_s))
-    merged_headers.each { |k, v| request[k] = v }
-
-    if @api_key && !@api_key.empty?
-      request['Authorization'] = "ApiKey #{@api_key}"
-    elsif @user && @password
-      request.basic_auth(@user, @password)
+    # Handle authentication
+    if config['api_key'] && !config['api_key'].empty?
+      client_options[:api_key] = config['api_key']
+    elsif config['user'] && config['password']
+      client_options[:user] = config['user']
+      client_options[:password] = config['password']
     end
 
-    if body
-      request.body = body
-      request['Content-Length'] = body.bytesize.to_s
+    # Handle SSL configuration
+    ssl_options = {}
+    ssl_verify = config.fetch('ssl_verify', true)
+    ssl_options[:verify] = ssl_verify
+    ssl_options[:ca_file] = presence(config['ca_file']) if config['ca_file']
+    ssl_options[:ca_path] = presence(config['ca_path']) if config['ca_path']
+    client_options[:ssl] = ssl_options unless ssl_options.empty?
+
+    # Handle custom headers
+    if config['headers'] && !config['headers'].empty?
+      client_options[:transport_options] = {
+        headers: config['headers'].transform_keys(&:to_s)
+      }
     end
 
-    request
-  end
-
-  def build_uri(path, params: nil)
-    normalized_path = path.start_with?('/') ? path : "/#{path}"
-    full_path = "#{@base_path}#{normalized_path}"
-
-    uri = @base_uri.dup
-    uri.path = full_path
-    uri.query = params ? URI.encode_www_form(params) : nil
-    uri
+    Elasticsearch::Client.new(client_options)
   end
 end
 
@@ -306,10 +246,14 @@ class FlightLoader
       return
     end
     
+    # Delete index if it exists before creating a new one
     if @client.index_exists?(index_name)
-      @logger.info("Index #{index_name} already exists")
-      @ensured_indices.add(index_name)
-      return
+      @logger.info("Deleting existing index '#{index_name}' before import")
+      if @client.delete_index(index_name)
+        @logger.info("Index '#{index_name}' deleted")
+      else
+        @logger.warn("Failed to delete index '#{index_name}'")
+      end
     end
 
     @logger.info("Creating index: #{index_name}")
@@ -844,24 +788,46 @@ def build_logger
   logger
 end
 
+def resolve_path(path)
+  # If path is absolute, use as-is
+  return path if Pathname.new(path).absolute?
+  
+  # Try relative to current directory first (if it exists)
+  return path if File.exist?(path)
+  
+  # Try relative to workspace root (one level up from script directory)
+  script_dir = File.dirname(File.expand_path(__FILE__))
+  workspace_root = File.expand_path(File.join(script_dir, '..'))
+  candidate = File.expand_path(File.join(workspace_root, path))
+  
+  # Return resolved path even if file doesn't exist (for optional files)
+  # The caller will check existence if needed
+  candidate
+end
+
 def load_config(path)
-  YAML.safe_load(File.read(path)) || {}
+  resolved_path = resolve_path(path)
+  YAML.safe_load(File.read(resolved_path)) || {}
 rescue Errno::ENOENT
-  raise "Config file not found: #{path}"
+  raise "Config file not found: #{path} (tried: #{resolved_path})"
 end
 
 def load_mapping(path)
-  JSON.parse(File.read(path))
+  resolved_path = resolve_path(path)
+  JSON.parse(File.read(resolved_path))
 rescue Errno::ENOENT
-  raise "Mapping file not found: #{path}"
+  raise "Mapping file not found: #{path} (tried: #{resolved_path})"
 end
 
 def files_to_process(options)
+  # Resolve data_dir path
+  resolved_data_dir = resolve_path(options[:data_dir])
+  
   if options[:file]
-    [resolve_file_path(options[:file], options[:data_dir])]
+    [resolve_file_path(options[:file], resolved_data_dir)]
   elsif options[:glob_files]
     # Shell-expanded glob: use the file paths directly
-    files = options[:glob_files].map { |f| resolve_file_path(f, options[:data_dir]) }
+    files = options[:glob_files].map { |f| resolve_file_path(f, resolved_data_dir) }
     files.select { |f| File.file?(f) }.sort
   elsif options[:glob]
     # Resolve glob pattern - try as-is first, then relative to data_dir
@@ -874,8 +840,8 @@ def files_to_process(options)
       # Try the pattern as-is first (in case it's relative to current directory)
       files = Dir.glob(glob_pattern).select { |f| File.file?(f) }
       if files.empty?
-        # If no matches, try relative to data_dir
-        expanded_pattern = File.join(options[:data_dir], glob_pattern)
+        # If no matches, try relative to resolved data_dir
+        expanded_pattern = File.join(resolved_data_dir, glob_pattern)
         files = Dir.glob(expanded_pattern).select { |f| File.file?(f) }
       end
       files = files.sort
@@ -886,23 +852,29 @@ def files_to_process(options)
     end
     files
   else
-    pattern_zip = File.join(options[:data_dir], '*.zip')
-    pattern_csv = File.join(options[:data_dir], '*.csv')
-    pattern_csv_gz = File.join(options[:data_dir], '*.csv.gz')
+    pattern_zip = File.join(resolved_data_dir, '*.zip')
+    pattern_csv = File.join(resolved_data_dir, '*.csv')
+    pattern_csv_gz = File.join(resolved_data_dir, '*.csv.gz')
     files = Dir.glob([pattern_zip, pattern_csv, pattern_csv_gz]).sort
     if files.empty?
-      raise "No .zip, .csv, or .csv.gz files found in #{options[:data_dir]}"
+      raise "No .zip, .csv, or .csv.gz files found in #{resolved_data_dir}"
     end
     files
   end
 end
 
 def resolve_file_path(path, data_dir)
+  # If path is absolute, use as-is
   expanded = File.expand_path(path)
   return expanded if File.exist?(expanded)
 
-  candidate = File.expand_path(File.join(data_dir, path))
+  # Try relative to resolved data_dir
+  resolved_data_dir = resolve_path(data_dir)
+  candidate = File.expand_path(File.join(resolved_data_dir, path))
   return candidate if File.exist?(candidate)
+
+  # Try relative to current directory
+  return path if File.exist?(path)
 
   raise "File not found: #{path}"
 end
@@ -936,6 +908,11 @@ def main(argv)
   end
 
   mapping = load_mapping(options[:mapping])
+  
+  # Resolve airports and cancellations file paths
+  resolved_airports_file = options[:airports_file] ? resolve_path(options[:airports_file]) : nil
+  resolved_cancellations_file = options[:cancellations_file] ? resolve_path(options[:cancellations_file]) : nil
+  
   loader = FlightLoader.new(
     client: client,
     mapping: mapping,
@@ -943,8 +920,8 @@ def main(argv)
     logger: logger,
     batch_size: options[:batch_size],
     refresh: options[:refresh],
-    airports_file: options[:airports_file],
-    cancellations_file: options[:cancellations_file]
+    airports_file: resolved_airports_file,
+    cancellations_file: resolved_cancellations_file
   )
 
   files = files_to_process(options)
@@ -953,6 +930,11 @@ end
 
 def sample_document(options:, logger:)
   mapping = load_mapping(options[:mapping])
+  
+  # Resolve airports and cancellations file paths
+  resolved_airports_file = options[:airports_file] ? resolve_path(options[:airports_file]) : nil
+  resolved_cancellations_file = options[:cancellations_file] ? resolve_path(options[:cancellations_file]) : nil
+  
   loader = FlightLoader.new(
     client: nil,
     mapping: mapping,
@@ -960,8 +942,8 @@ def sample_document(options:, logger:)
     logger: logger,
     batch_size: 1,
     refresh: false,
-    airports_file: options[:airports_file],
-    cancellations_file: options[:cancellations_file]
+    airports_file: resolved_airports_file,
+    cancellations_file: resolved_cancellations_file
   )
 
   files = files_to_process(options)
@@ -1005,5 +987,18 @@ rescue StandardError => e
 end
 
 if $PROGRAM_NAME == __FILE__
-  main(ARGV)
+  start_time = Time.now
+  begin
+    main(ARGV)
+  ensure
+    end_time = Time.now
+    duration = end_time - start_time
+    minutes = (duration / 60).floor
+    seconds = (duration % 60).round(2)
+    if minutes > 0
+      $stdout.puts "\nTotal time: #{minutes}m #{seconds}s"
+    else
+      $stdout.puts "\nTotal time: #{seconds}s"
+    end
+  end
 end

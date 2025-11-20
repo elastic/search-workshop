@@ -5,10 +5,8 @@ require 'optparse'
 require 'yaml'
 require 'json'
 require 'csv'
-require 'net/http'
-require 'uri'
+require 'elasticsearch'
 require 'logger'
-require 'openssl'
 
 # Embedded mapping for cancellations index
 CANCELLATIONS_MAPPING = {
@@ -35,134 +33,82 @@ class ElasticsearchClient
       raise ArgumentError, 'endpoint is required in the Elasticsearch config'
     end
 
-    @base_uri = URI(endpoint)
-    @base_path = @base_uri.path
-    @base_path = '' if @base_path.nil? || @base_path == '/'
+    @endpoint = endpoint
     @logger = logger
-    @headers = (config['headers'] || {}).transform_keys(&:to_s)
-    @user = config['user']
-    @password = config['password']
-    @api_key = config['api_key']
-    @ssl_verify = config.fetch('ssl_verify', true)
-    @ca_file = presence(config['ca_file'])
-    @ca_path = presence(config['ca_path'])
+    @client = build_client(config, endpoint)
   end
 
   def index_exists?(name)
-    response = request(:head, index_path(name))
-    response.is_a?(Net::HTTPSuccess)
-  rescue SocketError, Errno::ECONNREFUSED, Errno::ETIMEDOUT => e
-    raise "Cannot connect to Elasticsearch at #{@base_uri}: #{e.message}. Please check your endpoint configuration and network connectivity."
-  rescue StandardError => e
+    @client.indices.exists(index: name)
+  rescue Elasticsearch::Transport::Transport::Error => e
+    if e.message.include?('Connection refused') || e.message.include?('timeout')
+      raise "Cannot connect to Elasticsearch at #{@endpoint}: #{e.message}. Please check your endpoint configuration and network connectivity."
+    end
     raise "Failed to check index existence: #{e.message}"
   end
 
   def create_index(name, mapping)
-    response = request(
-      :put,
-      index_path(name),
-      body: JSON.dump(mapping),
-      headers: { 'Content-Type' => 'application/json' }
-    )
-
-    case response
-    when Net::HTTPSuccess
-      @logger.info("Index '#{name}' created")
-    when Net::HTTPConflict
-      @logger.warn("Index '#{name}' already exists (conflict)")
-    else
-      raise "Index creation failed: #{response.code} #{response.body}"
+    @client.indices.create(index: name, body: mapping)
+    @logger.info("Index '#{name}' created")
+  rescue Elasticsearch::Transport::Transport::Errors::Conflict => e
+    @logger.warn("Index '#{name}' already exists (conflict)")
+  rescue Elasticsearch::Transport::Transport::Error => e
+    if e.message.include?('Connection refused') || e.message.include?('timeout')
+      raise "Cannot connect to Elasticsearch at #{@endpoint}: #{e.message}. Please check your endpoint configuration and network connectivity."
     end
-  rescue SocketError, Errno::ECONNREFUSED, Errno::ETIMEDOUT => e
-    raise "Cannot connect to Elasticsearch at #{@base_uri}: #{e.message}. Please check your endpoint configuration and network connectivity."
+    raise "Index creation failed: #{e.message}"
   end
 
   def bulk(index, payload, refresh: false)
-    response = request(
-      :post,
-      "#{index_path(index)}/_bulk",
-      body: payload,
-      headers: { 'Content-Type' => 'application/x-ndjson' },
-      params: { refresh: refresh ? 'true' : 'false' }
-    )
-
-    unless response.is_a?(Net::HTTPSuccess)
-      raise "Bulk request failed: #{response.code} #{response.body}"
-    end
-
-    JSON.parse(response.body)
+    # The official gem handles bulk operations directly
+    # payload is already in NDJSON format (string)
+    result = @client.bulk(index: index, body: payload, refresh: refresh)
+    result
+  rescue Elasticsearch::Transport::Transport::Error => e
+    raise "Bulk request failed: #{e.message}"
   end
 
   def delete_index(name)
-    response = request(:delete, index_path(name))
-
-    case response
-    when Net::HTTPSuccess
-      true
-    when Net::HTTPNotFound
-      false
-    else
-      raise "Index deletion failed: #{response.code} #{response.body}"
-    end
+    @client.indices.delete(index: name)
+    true
+  rescue Elasticsearch::Transport::Transport::Errors::NotFound => e
+    false
+  rescue Elasticsearch::Transport::Transport::Error => e
+    raise "Index deletion failed: #{e.message}"
   end
 
   private
 
-  def index_path(name)
-    "/#{name}"
-  end
+  def build_client(config, endpoint)
+    client_options = {
+      url: endpoint,
+      log: false # We use our own logger
+    }
 
-  def request(method, path, body: nil, headers: {}, params: nil)
-    uri = build_uri(path, params: params)
-    http = Net::HTTP.new(uri.host, uri.port)
-    http.use_ssl = uri.scheme == 'https'
-    http.verify_mode = @ssl_verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE
-    http.ca_file = @ca_file if @ca_file
-    http.ca_path = @ca_path if @ca_path
-
-    request = build_request(method, uri, body, headers)
-
-    http.request(request)
-  end
-
-  def build_request(method, uri, body, headers)
-    request_class = case method.to_sym
-                    when :get then Net::HTTP::Get
-                    when :head then Net::HTTP::Head
-                    when :put then Net::HTTP::Put
-                    when :post then Net::HTTP::Post
-                    when :delete then Net::HTTP::Delete
-                    else
-                      raise ArgumentError, "Unsupported HTTP method: #{method}"
-                    end
-
-    request = request_class.new(uri.request_uri)
-
-    merged_headers = @headers.merge(headers.transform_keys(&:to_s))
-    merged_headers.each { |k, v| request[k] = v }
-
-    if @api_key && !@api_key.empty?
-      request['Authorization'] = "ApiKey #{@api_key}"
-    elsif @user && @password
-      request.basic_auth(@user, @password)
+    # Handle authentication
+    if config['api_key'] && !config['api_key'].empty?
+      client_options[:api_key] = config['api_key']
+    elsif config['user'] && config['password']
+      client_options[:user] = config['user']
+      client_options[:password] = config['password']
     end
 
-    if body
-      request.body = body
-      request['Content-Length'] = body.bytesize.to_s
+    # Handle SSL configuration
+    ssl_options = {}
+    ssl_verify = config.fetch('ssl_verify', true)
+    ssl_options[:verify] = ssl_verify
+    ssl_options[:ca_file] = presence(config['ca_file']) if config['ca_file']
+    ssl_options[:ca_path] = presence(config['ca_path']) if config['ca_path']
+    client_options[:ssl] = ssl_options unless ssl_options.empty?
+
+    # Handle custom headers
+    if config['headers'] && !config['headers'].empty?
+      client_options[:transport_options] = {
+        headers: config['headers'].transform_keys(&:to_s)
+      }
     end
 
-    request
-  end
-
-  def build_uri(path, params: nil)
-    normalized_path = path.start_with?('/') ? path : "/#{path}"
-    full_path = "#{@base_path}#{normalized_path}"
-
-    uri = @base_uri.dup
-    uri.path = full_path
-    uri.query = params ? URI.encode_www_form(params) : nil
-    uri
+    Elasticsearch::Client.new(client_options)
   end
 end
 
