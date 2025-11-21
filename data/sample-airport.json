@@ -1,0 +1,16 @@
+{
+  "id": 3830,
+  "name": "Chicago O'Hare International Airport",
+  "city": "Chicago",
+  "country": "United States",
+  "iata": "ORD",
+  "icao": "KORD",
+  "latitude": 41.9786,
+  "longitude": -87.9048,
+  "altitude": 672,
+  "timezone_offset": -6,
+  "dst": "A",
+  "timezone": "America/Chicago",
+  "type": "airport",
+  "source": "OurAirports"
+}

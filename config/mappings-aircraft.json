@@ -1,0 +1,162 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "index.refresh_interval": "5s"
+  },
+  "mappings": {
+    "properties": {
+      "N_NUMBER": {
+        "type": "keyword"
+      },
+      "SERIAL_NUMBER": {
+        "type": "keyword"
+      },
+      "MFR_MDL_CODE": {
+        "type": "keyword"
+      },
+      "ENG_MFR_MDL": {
+        "type": "keyword"
+      },
+      "YEAR_MFR": {
+        "type": "integer"
+      },
+      "TYPE_REGISTRANT": {
+        "type": "integer"
+      },
+      "NAME": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "STREET": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "STREET2": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "CITY": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "STATE": {
+        "type": "keyword"
+      },
+      "ZIP_CODE": {
+        "type": "keyword"
+      },
+      "REGION": {
+        "type": "keyword"
+      },
+      "COUNTY": {
+        "type": "keyword"
+      },
+      "COUNTRY": {
+        "type": "keyword"
+      },
+      "LAST_ACTION_DATE": {
+        "type": "date",
+        "format": "yyyyMMdd"
+      },
+      "CERT_ISSUE_DATE": {
+        "type": "date",
+        "format": "yyyyMMdd"
+      },
+      "CERTIFICATION": {
+        "type": "keyword"
+      },
+      "TYPE_AIRCRAFT": {
+        "type": "keyword"
+      },
+      "TYPE_ENGINE": {
+        "type": "keyword"
+      },
+      "STATUS_CODE": {
+        "type": "keyword"
+      },
+      "MODE_S_CODE": {
+        "type": "keyword"
+      },
+      "FRACT_OWNER": {
+        "type": "keyword"
+      },
+      "AIR_WORTH_DATE": {
+        "type": "date",
+        "format": "yyyyMMdd"
+      },
+      "OTHER_NAMES_1": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "OTHER_NAMES_2": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "OTHER_NAMES_3": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "OTHER_NAMES_4": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "OTHER_NAMES_5": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "EXPIRATION_DATE": {
+        "type": "date",
+        "format": "yyyyMMdd"
+      },
+      "UNIQUE_ID": {
+        "type": "keyword"
+      },
+      "KIT_MFR": {
+        "type": "keyword"
+      },
+      "KIT_MODEL": {
+        "type": "keyword"
+      },
+      "MODE_S_CODE_HEX": {
+        "type": "keyword"
+      }
+    }
+  }
+}
