@@ -10,6 +10,7 @@ RUST_CLI_DIR="$PROJECT_ROOT/cli-rust"
 JS_CLI_DIR="$PROJECT_ROOT/cli-js"
 PHP_CLI_DIR="$PROJECT_ROOT/cli-php"
 JAVA_CLI_DIR="$PROJECT_ROOT/cli-java"
+DOTNET_CLI_DIR="$PROJECT_ROOT/cli-dotnet"
 PYTHON_VENV_DIR="$PYTHON_CLI_DIR/venv"
 MAPPING_FILE="$PROJECT_ROOT/config/mappings-flights.json"
 CONFIG_FILE="$PROJECT_ROOT/config/elasticsearch.yml"
@@ -59,14 +60,18 @@ done
 # Validate client if specified
 if [ -n "$SELECTED_CLIENT" ]; then
   case "$SELECTED_CLIENT" in
-    ruby|python|go|rust|javascript|js|php|java)
+    ruby|python|go|rust|javascript|js|php|java|dotnet|csharp)
       # Normalize "js" to "javascript"
       if [ "$SELECTED_CLIENT" = "js" ]; then
         SELECTED_CLIENT="javascript"
       fi
+      # Normalize "csharp" to "dotnet"
+      if [ "$SELECTED_CLIENT" = "csharp" ]; then
+        SELECTED_CLIENT="dotnet"
+      fi
       ;;
     *)
-      echo "Error: Invalid client '$SELECTED_CLIENT'. Must be one of: ruby, python, go, rust, javascript (or js), php, java" >&2
+      echo "Error: Invalid client '$SELECTED_CLIENT'. Must be one of: ruby, python, go, rust, javascript (or js), php, java, dotnet (or csharp)" >&2
       exit 1
       ;;
   esac
@@ -74,8 +79,8 @@ fi
 
 # Select client (randomly if not specified)
 if [ -z "$SELECTED_CLIENT" ]; then
-  # Randomly select between Ruby, Python, Go, Rust, JavaScript, PHP, and Java clients
-  RANDOM_CHOICE=$((RANDOM % 7))
+  # Randomly select between Ruby, Python, Go, Rust, JavaScript, PHP, Java, and .NET clients
+  RANDOM_CHOICE=$((RANDOM % 8))
   if [ $RANDOM_CHOICE -eq 0 ]; then
     SELECTED_CLIENT="ruby"
   elif [ $RANDOM_CHOICE -eq 1 ]; then
@@ -88,8 +93,10 @@ if [ -z "$SELECTED_CLIENT" ]; then
     SELECTED_CLIENT="javascript"
   elif [ $RANDOM_CHOICE -eq 5 ]; then
     SELECTED_CLIENT="php"
-  else
+  elif [ $RANDOM_CHOICE -eq 6 ]; then
     SELECTED_CLIENT="java"
+  else
+    SELECTED_CLIENT="dotnet"
   fi
   echo "Randomly selected client: $SELECTED_CLIENT"
 else
@@ -118,6 +125,9 @@ case "$SELECTED_CLIENT" in
     ;;
   java)
     CLIENT_SCRIPT="$JAVA_CLI_DIR/target/import-flights-1.0.0.jar"
+    ;;
+  dotnet)
+    CLIENT_SCRIPT="$DOTNET_CLI_DIR"
     ;;
 esac
 
@@ -327,4 +337,33 @@ elif [ "$SELECTED_CLIENT" = "java" ]; then
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
   java -jar "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+elif [ "$SELECTED_CLIENT" = "dotnet" ]; then
+  cd "$DOTNET_CLI_DIR"
+
+  # Restore .NET dependencies if needed
+  if [ ! -d "bin" ] || [ ! -f "bin/Debug/net8.0/ImportFlights.dll" ]; then
+    echo "Restoring .NET dependencies and building..."
+    dotnet restore
+    dotnet build
+  fi
+
+  DEFAULT_ARGS=(--file "$DATA_FILE")
+
+  if [ ${#PASSTHROUGH[@]} -gt 0 ]; then
+    for arg in "${PASSTHROUGH[@]}"; do
+      case "$arg" in
+      --status | --delete-index | --help | -h)
+        DEFAULT_ARGS=()
+        break
+        ;;
+      esac
+    done
+  fi
+
+  # Use conditional expansion to avoid "unbound variable" error when arrays are empty
+  ARGS=()
+  [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
+  [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
+
+  dotnet run -- --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
 fi

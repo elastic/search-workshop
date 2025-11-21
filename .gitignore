@@ -48,3 +48,15 @@ build/
 *.ear
 .idea/
 *.iml
+
+# .NET artifacts
+/cli-dotnet/bin/
+/cli-dotnet/obj/
+*.dll
+*.pdb
+*.exe
+*.user
+*.suo
+*.cache
+*.deps.json
+*.runtimeconfig.json
