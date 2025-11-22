@@ -15,9 +15,10 @@ use Symfony\Component\Yaml\Yaml;
 
 class ElasticsearchClient
 {
-    private $endpoint;
-    private $logger;
-    private $client;
+    protected $endpoint;
+    protected $logger;
+    protected $client;
+    protected $config; // Store config for authenticated requests (protected for child classes)
 
     public function __construct(array $config, $logger)
     {
@@ -27,6 +28,7 @@ class ElasticsearchClient
 
         $this->endpoint = $config['endpoint'];
         $this->logger = $logger;
+        $this->config = $config;
         $this->client = $this->buildClient($config, $config['endpoint']);
     }
 
@@ -1346,7 +1348,8 @@ function deleteIndicesByPattern($client, $logger, string $pattern): void
     }
 }
 
-if (php_sapi_name() === 'cli') {
+// Only run main() if this file is being executed directly (not included)
+if (php_sapi_name() === 'cli' && basename(__FILE__) === basename($_SERVER['PHP_SELF'])) {
     $startTime = microtime(true);
     try {
         main($argv);

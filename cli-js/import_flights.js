@@ -7,11 +7,11 @@ import { execSync } from 'child_process';
 import { parse as parseCSV } from 'csv-parse/sync';
 import yaml from 'js-yaml';
 import { Client } from '@elastic/elasticsearch';
-import { program } from 'commander';
+import { Command } from 'commander';
 
 const BATCH_SIZE = 500;
 
-class ElasticsearchClient {
+export class ElasticsearchClient {
   constructor(config, logger) {
     const endpoint = config.endpoint;
     if (!endpoint) {
@@ -64,7 +64,8 @@ class ElasticsearchClient {
   async indexExists(name) {
     try {
       const response = await this.client.indices.exists({ index: name });
-      return response;
+      // Node client returns either a boolean or a response with a boolean body depending on version/config
+      return typeof response === 'boolean' ? response : Boolean(response?.body);
     } catch (error) {
       if (error.message && (error.message.includes('Connection refused') || error.message.includes('timeout'))) {
         throw new Error(
@@ -115,7 +116,8 @@ class ElasticsearchClient {
   async clusterHealth() {
     try {
       const response = await this.client.cluster.health();
-      return response;
+      // Newer clients wrap the payload in a body property
+      return response?.body ?? response;
     } catch (error) {
       throw new Error(`Cluster health request failed: ${error.message}`);
     }
@@ -853,6 +855,17 @@ class Logger {
 }
 
 async function main() {
+  // Only parse arguments if this file is being executed directly
+  const isDirectExecution = process.argv[1] && (
+    process.argv[1].endsWith('import_flights.js') || 
+    import.meta.url.endsWith('import_flights.js')
+  );
+  
+  if (!isDirectExecution) {
+    return; // Don't run if imported as a module
+  }
+
+  const program = new Command();
   program
     .name('import_flights.js')
     .description('Import flight data into Elasticsearch')
@@ -955,25 +968,27 @@ async function main() {
 }
 
 // Run main if this file is executed directly
-(async () => {
-  const startTime = Date.now();
-  try {
-    await main();
-  } catch (error) {
-    console.error('Error:', error.message);
-    if (error.stack) {
-      console.error(error.stack);
+if (process.argv[1] && process.argv[1].endsWith('import_flights.js')) {
+  (async () => {
+    const startTime = Date.now();
+    try {
+      await main();
+    } catch (error) {
+      console.error('Error:', error.message);
+      if (error.stack) {
+        console.error(error.stack);
+      }
+      process.exit(1);
+    } finally {
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
+      const minutes = Math.floor(durationMs / 60000);
+      const seconds = ((durationMs % 60000) / 1000).toFixed(2);
+      if (minutes > 0) {
+        console.log(`\nTotal time: ${minutes}m ${seconds}s`);
+      } else {
+        console.log(`\nTotal time: ${seconds}s`);
+      }
     }
-    process.exit(1);
-  } finally {
-    const endTime = Date.now();
-    const durationMs = endTime - startTime;
-    const minutes = Math.floor(durationMs / 60000);
-    const seconds = ((durationMs % 60000) / 1000).toFixed(2);
-    if (minutes > 0) {
-      console.log(`\nTotal time: ${minutes}m ${seconds}s`);
-    } else {
-      console.log(`\nTotal time: ${seconds}s`);
-    }
-  }
-})();
+  })();
+}

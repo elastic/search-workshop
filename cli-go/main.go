@@ -40,6 +40,7 @@ type ElasticsearchClient struct {
 	client   *elasticsearch.Client
 	endpoint string
 	logger   *log.Logger
+	config   *Config // Store config for authenticated requests
 }
 
 func NewElasticsearchClient(config Config, logger *log.Logger) (*ElasticsearchClient, error) {
@@ -80,6 +81,7 @@ func NewElasticsearchClient(config Config, logger *log.Logger) (*ElasticsearchCl
 		client:   client,
 		endpoint: config.Endpoint,
 		logger:   logger,
+		config:   &config,
 	}, nil
 }
 
@@ -1463,6 +1465,13 @@ func parseOptions() *Options {
 }
 
 func main() {
+	// Check if we should run contracts import mode
+	programName := filepath.Base(os.Args[0])
+	if strings.Contains(programName, "contract") || (len(os.Args) > 1 && os.Args[1] == "contracts") {
+		mainContracts()
+		return
+	}
+
 	startTime := time.Now()
 	defer func() {
 		duration := time.Since(startTime)

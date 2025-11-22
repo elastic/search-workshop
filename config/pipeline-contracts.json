@@ -1,0 +1,31 @@
+{
+  "description": "Extract text from PDF - semantic_text field handles chunking and embeddings",
+  "processors": [
+    {
+      "attachment": {
+        "field": "data",
+        "target_field": "attachment",
+        "remove_binary": true
+      }
+    },
+    {
+      "set": {
+        "field": "semantic_content",
+        "copy_from": "attachment.content",
+        "ignore_empty_value": true
+      }
+    },
+    {
+      "remove": {
+        "field": "data",
+        "ignore_missing": true
+      }
+    },
+    {
+      "set": {
+        "field": "upload_date",
+        "value": "{{ _ingest.timestamp }}"
+      }
+    }
+  ]
+}

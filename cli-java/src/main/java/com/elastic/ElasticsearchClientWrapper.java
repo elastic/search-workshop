@@ -4,9 +4,12 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.ElasticsearchException;
 import co.elastic.clients.elasticsearch.cat.IndicesResponse;
 import co.elastic.clients.elasticsearch.cluster.HealthResponse;
+import co.elastic.clients.elasticsearch.core.IndexRequest;
+import co.elastic.clients.elasticsearch.core.IndexResponse;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
 import co.elastic.clients.elasticsearch.indices.DeleteIndexRequest;
 import co.elastic.clients.elasticsearch.indices.ExistsRequest;
+import co.elastic.clients.elasticsearch.ingest.PutPipelineRequest;
 import co.elastic.clients.json.JsonData;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
 import org.apache.http.HttpHost;
@@ -75,23 +78,51 @@ public class ElasticsearchClientWrapper {
         try {
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             String mappingJson = mapper.writeValueAsString(mapping);
-            CreateIndexRequest request = CreateIndexRequest.of(i -> i
-                .index(name)
-                .withJson(new java.io.ByteArrayInputStream(mappingJson.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-            );
-            client.indices().create(request);
-            logger.info("Index '" + name + "' created");
-        } catch (ElasticsearchException e) {
-            if (e.status() == 400 && e.getMessage() != null && e.getMessage().contains("resource_already_exists")) {
-                logger.warning("Index '" + name + "' already exists (conflict)");
-            } else {
-                String message = e.getMessage();
-                if (message != null && (message.contains("Connection refused") || message.contains("timeout"))) {
-                    throw new IOException("Cannot connect to Elasticsearch at " + endpoint + ": " + message + 
-                        ". Please check your endpoint configuration and network connectivity.", e);
+            
+            // Use REST client directly for index creation to avoid type system limitations
+            // with semantic_text and other newer field types
+            org.elasticsearch.client.Request request = new org.elasticsearch.client.Request("PUT", "/" + name);
+            request.setEntity(new org.apache.http.entity.StringEntity(
+                mappingJson,
+                org.apache.http.entity.ContentType.APPLICATION_JSON));
+            
+            org.elasticsearch.client.Response response = restClient.performRequest(request);
+            int statusCode = response.getStatusLine().getStatusCode();
+            
+            if (statusCode >= 200 && statusCode < 300) {
+                logger.info("Index '" + name + "' created");
+            } else if (statusCode == 400) {
+                // Parse error response to check for resource_already_exists
+                try (java.io.InputStream responseStream = response.getEntity().getContent();
+                     java.io.BufferedReader reader = new java.io.BufferedReader(
+                         new java.io.InputStreamReader(responseStream, java.nio.charset.StandardCharsets.UTF_8))) {
+                    
+                    StringBuilder responseBody = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        responseBody.append(line);
+                    }
+                    
+                    String errorBody = responseBody.toString();
+                    if (errorBody.contains("resource_already_exists")) {
+                        logger.warning("Index '" + name + "' already exists (conflict)");
+                        return;
+                    }
                 }
-                throw new IOException("Index creation failed: " + message, e);
+                throw new IOException("Index creation failed with status " + statusCode);
+            } else {
+                throw new IOException("Index creation failed with status " + statusCode);
             }
+        } catch (Exception e) {
+            if (e instanceof IOException) {
+                throw e;
+            }
+            String message = e.getMessage();
+            if (message != null && (message.contains("Connection refused") || message.contains("timeout"))) {
+                throw new IOException("Cannot connect to Elasticsearch at " + endpoint + ": " + message + 
+                    ". Please check your endpoint configuration and network connectivity.", e);
+            }
+            throw new IOException("Index creation failed: " + message, e);
         }
     }
 
@@ -213,6 +244,111 @@ public class ElasticsearchClientWrapper {
 
     public ElasticsearchClient getClient() {
         return client;
+    }
+
+    public void createPipeline(String name, Map<String, Object> pipelineConfig) throws IOException {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            String pipelineJson = mapper.writeValueAsString(pipelineConfig);
+            
+            PutPipelineRequest request = PutPipelineRequest.of(p -> p
+                .id(name)
+                .withJson(new java.io.ByteArrayInputStream(pipelineJson.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+            );
+            
+            client.ingest().putPipeline(request);
+            logger.info("Pipeline '" + name + "' created/updated");
+        } catch (ElasticsearchException e) {
+            String message = e.getMessage();
+            if (message != null && (message.contains("Connection refused") || message.contains("timeout"))) {
+                throw new IOException("Cannot connect to Elasticsearch at " + endpoint + ": " + message + 
+                    ". Please check your endpoint configuration and network connectivity.", e);
+            }
+            throw new IOException("Pipeline creation failed: " + message, e);
+        }
+    }
+
+    public void indexDocument(String indexName, Map<String, Object> document, String pipeline) throws IOException {
+        try {
+            IndexRequest.Builder<Map<String, Object>> requestBuilder = new IndexRequest.Builder<Map<String, Object>>()
+                .index(indexName)
+                .document(document)
+                .refresh(co.elastic.clients.elasticsearch._types.Refresh.WaitFor);
+            
+            if (pipeline != null && !pipeline.isEmpty()) {
+                requestBuilder.pipeline(pipeline);
+            }
+            
+            IndexRequest<Map<String, Object>> request = requestBuilder.build();
+            IndexResponse response = client.index(request);
+            
+            // Verify the response indicates success
+            if (response.result() == null || 
+                (response.result() != co.elastic.clients.elasticsearch._types.Result.Created && 
+                 response.result() != co.elastic.clients.elasticsearch._types.Result.Updated)) {
+                throw new IOException("Document indexing failed: unexpected result " + response.result());
+            }
+        } catch (ElasticsearchException e) {
+            String message = e.getMessage();
+            // Log full error details for debugging
+            logger.severe("ElasticsearchException during indexing: " + e.toString());
+            if (e.response() != null) {
+                try {
+                    logger.severe("Error response: " + e.response().toString());
+                } catch (Exception ex) {
+                    // Ignore if we can't get response details
+                }
+            }
+            if (message != null && (message.contains("Connection refused") || message.contains("timeout"))) {
+                throw new IOException("Cannot connect to Elasticsearch at " + endpoint + ": " + message + 
+                    ". Please check your endpoint configuration and network connectivity.", e);
+            }
+            throw new IOException("Document indexing failed: " + message, e);
+        }
+    }
+
+    /**
+     * Get inference endpoints. Note: This uses the low-level REST client as the inference
+     * endpoints API is not yet available in the official Java client API.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getInferenceEndpoints() throws IOException {
+        try {
+            org.elasticsearch.client.Request request = new org.elasticsearch.client.Request("GET", "/_inference/_all");
+            org.elasticsearch.client.Response response = restClient.performRequest(request);
+            
+            try (java.io.InputStream responseStream = response.getEntity().getContent();
+                 java.io.BufferedReader reader = new java.io.BufferedReader(
+                     new java.io.InputStreamReader(responseStream, java.nio.charset.StandardCharsets.UTF_8))) {
+                
+                StringBuilder responseBody = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBody.append(line);
+                }
+                
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                Map<String, Object> result = mapper.readValue(responseBody.toString(), Map.class);
+                return result != null ? result : new HashMap<>();
+            }
+        } catch (Exception e) {
+            logger.warning("Failed to get inference endpoints: " + e.getMessage());
+            Map<String, Object> emptyResult = new HashMap<>();
+            emptyResult.put("endpoints", new ArrayList<>());
+            return emptyResult;
+        }
+    }
+
+    public long countDocuments(String indexName) throws IOException {
+        try {
+            co.elastic.clients.elasticsearch.core.CountRequest request = 
+                co.elastic.clients.elasticsearch.core.CountRequest.of(c -> c.index(indexName));
+            co.elastic.clients.elasticsearch.core.CountResponse response = client.count(request);
+            return response.count();
+        } catch (Exception e) {
+            logger.warning("Failed to count documents: " + e.getMessage());
+            return 0;
+        }
     }
 
     public void close() throws IOException {

@@ -2,15 +2,15 @@ using Elastic.Clients.Elasticsearch;
 using Elastic.Clients.Elasticsearch.Cluster;
 using Elastic.Clients.Elasticsearch.IndexManagement;
 using Elastic.Transport;
+using Elastic.Transport.Products.Elasticsearch;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using HttpMethod = Elastic.Transport.HttpMethod;
 
 namespace ImportFlights;
 
@@ -259,6 +259,198 @@ public class ElasticsearchClientWrapper
             }
 
             throw new Exception($"Failed to list indices: {ex.Message}", ex);
+        }
+    }
+
+    public async Task CreatePipelineAsync(string name, Dictionary<string, object> pipelineConfig)
+    {
+        var json = JsonSerializer.Serialize(pipelineConfig);
+        var postData = PostData.String(json);
+
+        var response = await _client.Transport.RequestAsync<StringResponse>(
+            HttpMethod.PUT,
+            $"/_ingest/pipeline/{name}",
+            postData,
+            requestParameters: null,
+            openTelemetryData: default,
+            cancellationToken: default);
+
+        if (response.ApiCallDetails?.HasSuccessfulStatusCode != true)
+        {
+            var debug = response.ApiCallDetails?.DebugInformation ?? "Unknown error creating pipeline";
+            throw new Exception($"Pipeline creation failed: {debug}");
+        }
+
+        _logger.Info($"Pipeline '{name}' created/updated");
+    }
+
+    public async Task IndexDocumentAsync(string indexName, Dictionary<string, object> document, string? pipeline = null)
+    {
+        try
+        {
+            var response = await _client.IndexAsync(document, r =>
+            {
+                r.Index(indexName);
+                r.Refresh(Refresh.WaitFor);
+                if (!string.IsNullOrWhiteSpace(pipeline))
+                {
+                    r.Pipeline(pipeline);
+                }
+            });
+
+            if (!response.IsValidResponse)
+            {
+                throw new Exception(response.ElasticsearchServerError?.Error?.Reason ?? "Unknown indexing error");
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Document indexing failed: {ex.Message}", ex);
+        }
+    }
+
+    public async Task<List<Dictionary<string, object>>> GetInferenceEndpointsAsync()
+    {
+        try
+        {
+            var response = await _client.Transport.RequestAsync<StringResponse>(
+                HttpMethod.GET,
+                "/_inference/_all",
+                postData: null,
+                requestParameters: null,
+                openTelemetryData: default,
+                cancellationToken: default);
+
+            if (response.ApiCallDetails?.HasSuccessfulStatusCode != true)
+            {
+                var debug = response.ApiCallDetails?.DebugInformation ?? "Unknown error requesting inference endpoints";
+                throw new Exception($"Inference endpoints request failed: {debug}");
+            }
+
+            var body = response.Body ?? string.Empty;
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, object>>(body);
+            if (parsed == null)
+            {
+                return new List<Dictionary<string, object>>();
+            }
+
+            if (parsed.TryGetValue("endpoints", out var endpointsObj))
+            {
+                // endpoints could be list or map
+                if (endpointsObj is JsonElement elem)
+                {
+                    endpointsObj = DeserializeElement(elem);
+                }
+
+                if (endpointsObj is List<Dictionary<string, object>> endpointList)
+                {
+                    return endpointList;
+                }
+
+                if (endpointsObj is List<object> endpointObjects)
+                {
+                    return endpointObjects
+                        .Select(obj => obj as Dictionary<string, object> ?? new Dictionary<string, object>())
+                        .ToList();
+                }
+
+                if (endpointsObj is Dictionary<string, object> endpointMap)
+                {
+                    return endpointMap
+                        .Select(kvp =>
+                        {
+                            if (kvp.Value is Dictionary<string, object> dict)
+                            {
+                                dict["inference_id"] = kvp.Key;
+                                return dict;
+                            }
+                            return new Dictionary<string, object>
+                            {
+                                ["inference_id"] = kvp.Key
+                            };
+                        })
+                        .ToList();
+                }
+            }
+
+            // Fallback: treat top-level keys (except _shards) as endpoints
+            var fallback = new List<Dictionary<string, object>>();
+            foreach (var kvp in parsed)
+            {
+                if (kvp.Key == "_shards")
+                {
+                    continue;
+                }
+                if (kvp.Value is Dictionary<string, object> dict)
+                {
+                    dict["inference_id"] = kvp.Key;
+                    fallback.Add(dict);
+                }
+                else
+                {
+                    fallback.Add(new Dictionary<string, object> { ["inference_id"] = kvp.Key });
+                }
+            }
+
+            return fallback;
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Failed to get inference endpoints: {ex.Message}", ex);
+        }
+    }
+
+    public async Task<long> CountDocumentsAsync(string indexName)
+    {
+        try
+        {
+            var response = await _client.CountAsync(c => c.Index(indexName));
+            return response.Count;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"Failed to count documents: {ex.Message}");
+            return 0;
+        }
+    }
+
+    private static object? DeserializeElement(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var dict = new Dictionary<string, object>();
+                foreach (var prop in element.EnumerateObject())
+                {
+                    dict[prop.Name] = DeserializeElement(prop.Value)!;
+                }
+                return dict;
+            case JsonValueKind.Array:
+                var list = new List<object>();
+                foreach (var item in element.EnumerateArray())
+                {
+                    list.Add(DeserializeElement(item)!);
+                }
+                return list.Cast<object>().ToList();
+            case JsonValueKind.String:
+                return element.GetString() ?? string.Empty;
+            case JsonValueKind.Number:
+                if (element.TryGetInt64(out var l))
+                {
+                    return l;
+                }
+                if (element.TryGetDouble(out var d))
+                {
+                    return d;
+                }
+                return element.GetRawText();
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                return element.GetBoolean();
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+            default:
+                return null;
         }
     }
 

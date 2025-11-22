@@ -1,6 +1,7 @@
 GEM
   remote: https://rubygems.org/
   specs:
+    base64 (0.3.0)
     csv (3.3.5)
     elastic-transport (8.4.1)
       faraday (< 3)
@@ -28,6 +29,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  base64
   csv
   elasticsearch (~> 8.0)
 
