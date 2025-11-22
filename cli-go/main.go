@@ -1299,8 +1299,8 @@ func filesToProcess(options *Options) ([]string, error) {
 		return files, nil
 	}
 
-	// Default: all files in data directory (when --all is set or no specific option)
-	if options.All || (options.File == "" && options.Glob == "" && len(options.GlobFiles) == 0) {
+	// Import all files when --all is set
+	if options.All {
 		patternZip := filepath.Join(resolvedDataDir, "*.zip")
 		patternCSV := filepath.Join(resolvedDataDir, "*.csv")
 		patternCSVGz := filepath.Join(resolvedDataDir, "*.csv.gz")
@@ -1450,6 +1450,11 @@ func parseOptions() *Options {
 
 		if selectionCount > 1 {
 			fmt.Fprintf(os.Stderr, "Cannot use --file, --all, and --glob together (use only one)\n")
+			os.Exit(1)
+		}
+
+		if selectionCount == 0 {
+			fmt.Fprintf(os.Stderr, "Please provide either --file PATH, --all, or --glob PATTERN\n")
 			os.Exit(1)
 		}
 	}
