@@ -337,7 +337,7 @@ class ContractLoader {
         ContractLoader.PIPELINE_NAME
       );
 
-      this.logger.info(`Indexed: ${filename} (airline: ${airline})`);
+      // Don't log here - progress is handled in ingestPdfs()
       this.indexedCount += 1;
       return true;
     } catch (error) {
@@ -357,10 +357,12 @@ class ContractLoader {
       return false;
     }
 
-    this.logger.info(`Processing ${pdfFiles.length} PDF file(s)...`);
+    const totalFiles = pdfFiles.length;
+    this.logger.info(`Processing ${totalFiles} PDF file(s)...`);
 
     let successCount = 0;
     let failedCount = 0;
+    let processedCount = 0;
 
     for (const pdfFile of pdfFiles) {
       if (await this.indexPdf(pdfFile)) {
@@ -368,9 +370,18 @@ class ContractLoader {
       } else {
         failedCount += 1;
       }
+      
+      processedCount += 1;
+      
+      // Update progress
+      const percentage = ((processedCount / totalFiles) * 100).toFixed(1);
+      process.stdout.write(`\r${processedCount} of ${totalFiles} files processed (${percentage}%)`);
     }
 
-    this.logger.info(`Indexed ${successCount} of ${pdfFiles.length} file(s)`);
+    // Print newline after progress line
+    console.log();
+
+    this.logger.info(`Indexed ${successCount} of ${totalFiles} file(s)`);
     if (failedCount > 0) {
       this.logger.warn(`Failed: ${failedCount}`);
     }

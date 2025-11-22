@@ -372,7 +372,7 @@ class ContractLoader
 
             $this->client->indexDocument(ES_INDEX, $document, PIPELINE_NAME);
 
-            $this->logger->info("Indexed: {$filename} (airline: {$airline})");
+            // Don't log here - progress is handled in ingestPdfs()
             $this->indexedCount++;
             return true;
         } catch (\Exception $e) {
@@ -390,10 +390,12 @@ class ContractLoader
             return false;
         }
 
-        $this->logger->info("Processing " . count($pdfFiles) . " PDF file(s)...");
+        $totalFiles = count($pdfFiles);
+        $this->logger->info("Processing {$totalFiles} PDF file(s)...");
 
         $successCount = 0;
         $failedCount = 0;
+        $processedCount = 0;
 
         foreach ($pdfFiles as $pdfFile) {
             if ($this->indexPdf($pdfFile)) {
@@ -401,9 +403,18 @@ class ContractLoader
             } else {
                 $failedCount++;
             }
+            
+            $processedCount++;
+            
+            // Update progress
+            $percentage = round(($processedCount / $totalFiles) * 100, 1);
+            echo "\r{$processedCount} of {$totalFiles} files processed ({$percentage}%)";
         }
 
-        $this->logger->info("Indexed {$successCount} of " . count($pdfFiles) . " file(s)");
+        // Print newline after progress line
+        echo "\n";
+
+        $this->logger->info("Indexed {$successCount} of {$totalFiles} file(s)");
         if ($failedCount > 0) {
             $this->logger->warn("Failed: {$failedCount}");
         }

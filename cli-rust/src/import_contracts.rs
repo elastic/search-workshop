@@ -18,6 +18,7 @@ use elasticsearch::{
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 // Simple logging macros
@@ -654,7 +655,7 @@ impl ContractLoader {
                     .await
                 {
                     Ok(_) => {
-                        info!("Indexed: {} (airline: {})", filename, airline);
+                        // Don't log here - progress is handled in ingest_pdfs()
                         self.indexed_count += 1;
                         Ok(true)
                     }
@@ -688,6 +689,7 @@ impl ContractLoader {
 
         let mut success_count = 0;
         let mut failed_count = 0;
+        let mut processed_count = 0;
 
         for pdf_file in pdf_files {
             if self.index_pdf(&pdf_file).await.unwrap_or(false) {
@@ -695,7 +697,17 @@ impl ContractLoader {
             } else {
                 failed_count += 1;
             }
+            
+            processed_count += 1;
+            
+            // Update progress
+            let percentage = (processed_count as f64 / total_files as f64 * 100.0 * 10.0).round() / 10.0;
+            print!("\r{} of {} files processed ({:.1}%)", processed_count, total_files, percentage);
+            std::io::stdout().flush().ok();
         }
+
+        // Print newline after progress line
+        println!();
 
         info!("Indexed {} of {} file(s)", success_count, total_files);
         if failed_count > 0 {

@@ -277,7 +277,7 @@ public class ContractLoader {
 
             client.indexDocument(ES_INDEX, document, PIPELINE_NAME);
 
-            logger.info("Indexed: " + filename + " (airline: " + airline + ")");
+            // Don't log here - progress is handled in ingestPdfs()
             indexedCount++;
             return true;
         } catch (Exception e) {
@@ -299,10 +299,12 @@ public class ContractLoader {
                 return false;
             }
 
-            logger.info("Processing " + pdfFiles.size() + " PDF file(s)...");
+            int totalFiles = pdfFiles.size();
+            logger.info("Processing " + totalFiles + " PDF file(s)...");
 
             int successCount = 0;
             int failedCount = 0;
+            int processedCount = 0;
 
             for (Path pdfFile : pdfFiles) {
                 if (indexPdf(pdfFile)) {
@@ -310,9 +312,19 @@ public class ContractLoader {
                 } else {
                     failedCount++;
                 }
+                
+                processedCount++;
+                
+                // Update progress
+                double percentage = Math.round((double)processedCount / totalFiles * 1000.0) / 10.0;
+                System.out.print(String.format("\r%d of %d files processed (%.1f%%)", 
+                    processedCount, totalFiles, percentage));
             }
 
-            logger.info("Indexed " + successCount + " of " + pdfFiles.size() + " file(s)");
+            // Print newline after progress line
+            System.out.println();
+
+            logger.info("Indexed " + successCount + " of " + totalFiles + " file(s)");
             if (failedCount > 0) {
                 logger.warning("Failed: " + failedCount);
             }

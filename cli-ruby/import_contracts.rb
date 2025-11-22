@@ -113,11 +113,18 @@ class ElasticsearchClient
     client_options[:ssl] = ssl_options unless ssl_options.empty?
 
     # Handle custom headers
+    transport_opts = {}
     if config['headers'] && !config['headers'].empty?
-      client_options[:transport_options] = {
-        headers: config['headers'].transform_keys(&:to_s)
-      }
+      transport_opts[:headers] = config['headers'].transform_keys(&:to_s)
     end
+    client_options[:transport_options] = transport_opts unless transport_opts.empty?
+
+    # Set longer timeouts for PDF processing (ELSER inference can take several minutes)
+    # Python's requests library waits indefinitely by default, so we match that behavior
+    # by setting a very long timeout (30 minutes should be more than enough)
+    # Timeouts are set at the client level, not in transport_options
+    client_options[:request_timeout] = config.fetch('request_timeout', 1800) # 30 minutes
+    client_options[:open_timeout] = config.fetch('open_timeout', 30) # 30 seconds for connection
 
     Elasticsearch::Client.new(client_options)
   end
@@ -326,7 +333,7 @@ class ContractLoader
       
       result = @client.index_document(ES_INDEX, document, pipeline: PIPELINE_NAME)
       
-      @logger.info("Indexed: #{filename} (airline: #{airline})")
+      # Don't log here - progress is handled in ingest_pdfs()
       @indexed_count += 1
       true
     rescue StandardError => e
@@ -343,10 +350,12 @@ class ContractLoader
       return false
     end
     
-    @logger.info("Processing #{pdf_files.length} PDF file(s)...")
+    total_files = pdf_files.length
+    @logger.info("Processing #{total_files} PDF file(s)...")
     
     success_count = 0
     failed_count = 0
+    processed_count = 0
     
     pdf_files.each do |pdf_file|
       if index_pdf(pdf_file)
@@ -354,9 +363,19 @@ class ContractLoader
       else
         failed_count += 1
       end
+      
+      processed_count += 1
+      
+      # Update progress
+      percentage = ((processed_count.to_f / total_files) * 100).round(1)
+      print "\r#{processed_count} of #{total_files} files processed (#{percentage}%)"
+      $stdout.flush
     end
     
-    @logger.info("Indexed #{success_count} of #{pdf_files.length} file(s)")
+    # Print newline after progress line
+    puts
+    
+    @logger.info("Indexed #{success_count} of #{total_files} file(s)")
     @logger.warn("Failed: #{failed_count}") if failed_count > 0
     
     failed_count == 0

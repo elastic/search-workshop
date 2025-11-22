@@ -310,15 +310,16 @@ def index_pdf(pdf_path):
         )
 
         if response.status_code in [200, 201]:
-            print(f"Indexed: {filename} (airline: {airline})")
+            # Don't print here - progress is handled in ingest_pdfs()
             return True
         else:
-            print(f"Indexing failed: HTTP {response.status_code}")
+            # Only print errors, not success messages
+            print(f"\nIndexing failed for {filename}: HTTP {response.status_code}")
             print(json.dumps(response.json(), indent=2))
             return False
 
     except Exception as e:
-        print(f"Error processing {filename}: {str(e)}")
+        print(f"\nError processing {filename}: {str(e)}")
         return False
 
 
@@ -330,18 +331,31 @@ def ingest_pdfs(pdf_path):
         print("No PDF files to process")
         return False
 
-    print(f"Processing {len(pdf_files)} PDF file(s)...")
+    total_files = len(pdf_files)
+    print(f"Processing {total_files} PDF file(s)...")
 
     success_count = 0
     failed_count = 0
+    processed_count = 0
 
     for pdf_file in pdf_files:
         if index_pdf(pdf_file):
             success_count += 1
         else:
             failed_count += 1
+        
+        processed_count += 1
+        
+        # Update progress
+        percentage = round(processed_count / total_files * 100, 1)
+        progress = f"\r{processed_count} of {total_files} files processed ({percentage}%)"
+        sys.stdout.write(progress)
+        sys.stdout.flush()
 
-    print(f"Indexed {success_count} of {len(pdf_files)} file(s)")
+    # Print newline after progress line
+    print()
+    
+    print(f"Indexed {success_count} of {total_files} file(s)")
     if failed_count > 0:
         print(f"Failed: {failed_count}")
 

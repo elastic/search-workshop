@@ -198,10 +198,12 @@ public class ContractLoader
             return false;
         }
 
-        _logger.Info($"Processing {pdfFiles.Count} PDF file(s)...");
+        var totalFiles = pdfFiles.Count;
+        _logger.Info($"Processing {totalFiles} PDF file(s)...");
 
         var success = 0;
         var failed = 0;
+        var processed = 0;
 
         foreach (var pdfFile in pdfFiles)
         {
@@ -213,9 +215,18 @@ public class ContractLoader
             {
                 failed++;
             }
+            
+            processed++;
+            
+            // Update progress
+            var percentage = Math.Round((double)processed / totalFiles * 100, 1);
+            Console.Write($"\r{processed} of {totalFiles} files processed ({percentage}%)");
         }
 
-        _logger.Info($"Indexed {success} of {pdfFiles.Count} file(s)");
+        // Print newline after progress line
+        Console.WriteLine();
+
+        _logger.Info($"Indexed {success} of {totalFiles} file(s)");
         if (failed > 0)
         {
             _logger.Warn($"Failed: {failed}");
@@ -421,7 +432,7 @@ public class ContractLoader
 
             await _client.IndexDocumentAsync(EsIndex, document, PipelineName);
 
-            _logger.Info($"Indexed: {filename} (airline: {airline})");
+            // Don't log here - progress is handled in IngestPdfsAsync()
             _indexedCount += 1;
             return true;
         }

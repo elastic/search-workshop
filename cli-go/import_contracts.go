@@ -436,11 +436,11 @@ func (l *ContractLoader) IndexPdf(pdfPath string) bool {
 	}
 
 	if err := l.client.IndexDocument(esIndex, document, pipelineName); err != nil {
-		l.logger.Printf("Error processing %s: %v", filename, err)
+		l.logger.Printf("\nError processing %s: %v", filename, err)
 		return false
 	}
 
-	l.logger.Printf("Indexed: %s (airline: %s)", filename, airline)
+	// Don't log here - progress is handled in IngestPdfs()
 	l.indexedCount++
 	return true
 }
@@ -457,10 +457,12 @@ func (l *ContractLoader) IngestPdfs(pdfPath string) bool {
 		return false
 	}
 
-	l.logger.Printf("Processing %d PDF file(s)...", len(pdfFiles))
+	totalFiles := len(pdfFiles)
+	l.logger.Printf("Processing %d PDF file(s)...", totalFiles)
 
 	successCount := 0
 	failedCount := 0
+	processedCount := 0
 
 	for _, pdfFile := range pdfFiles {
 		if l.IndexPdf(pdfFile) {
@@ -468,9 +470,18 @@ func (l *ContractLoader) IngestPdfs(pdfPath string) bool {
 		} else {
 			failedCount++
 		}
+		
+		processedCount++
+		
+		// Update progress
+		percentage := float64(processedCount) / float64(totalFiles) * 100
+		fmt.Printf("\r%d of %d files processed (%.1f%%)", processedCount, totalFiles, percentage)
 	}
 
-	l.logger.Printf("Indexed %d of %d file(s)", successCount, len(pdfFiles))
+	// Print newline after progress line
+	fmt.Println()
+
+	l.logger.Printf("Indexed %d of %d file(s)", successCount, totalFiles)
 	if failedCount > 0 {
 		l.logger.Printf("Failed: %d", failedCount)
 	}

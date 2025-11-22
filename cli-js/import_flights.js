@@ -58,6 +58,17 @@ export class ElasticsearchClient {
       }
     }
 
+    // Set longer timeouts for PDF processing (ELSER inference can take several minutes)
+    // Python's requests library waits indefinitely by default, so we match that behavior
+    // by setting a very long timeout (30 minutes should be more than enough)
+    // requestTimeout is in milliseconds
+    clientConfig.requestTimeout = config.request_timeout 
+      ? config.request_timeout * 1000 
+      : 1800000; // 30 minutes default
+    clientConfig.pingTimeout = config.open_timeout 
+      ? config.open_timeout * 1000 
+      : 30000; // 30 seconds default
+
     this.client = new Client(clientConfig);
   }
 

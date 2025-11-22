@@ -16,6 +16,7 @@ import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
@@ -374,6 +375,21 @@ public class ElasticsearchClientWrapper {
             Boolean sslVerify = (Boolean) config.getOrDefault("ssl_verify", true);
             @SuppressWarnings("unchecked")
             Map<String, String> headers = (Map<String, String>) config.get("headers");
+            
+            // Get timeout settings from config (default to 30 minutes for PDF processing)
+            // Python's requests library waits indefinitely by default, so we match that behavior
+            int requestTimeout = config.containsKey("request_timeout") ? 
+                ((Number) config.get("request_timeout")).intValue() * 1000 : 1800000; // 30 minutes in milliseconds
+            int connectTimeout = config.containsKey("open_timeout") ? 
+                ((Number) config.get("open_timeout")).intValue() * 1000 : 30000; // 30 seconds in milliseconds
+
+            builder.setRequestConfigCallback(requestConfigBuilder -> {
+                // Set timeouts for PDF processing (ELSER inference can take several minutes)
+                return requestConfigBuilder
+                    .setConnectTimeout(connectTimeout)
+                    .setSocketTimeout(requestTimeout)
+                    .setConnectionRequestTimeout(connectTimeout);
+            });
 
             builder.setHttpClientConfigCallback(httpClientBuilder -> {
                 // Handle authentication

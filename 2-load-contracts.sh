@@ -160,7 +160,7 @@ elif [ "$SELECTED_CLIENT" = "java" ]; then
   cd "$JAVA_CLI_DIR"
   build_args ARGS "$PDF_PATH"
   mvn -q -DskipTests package
-  java -cp target/import-contracts.jar com.elastic.ImportContracts --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" "${ARGS[@]}"
+  java -cp target/import-flights-1.0.0.jar com.elastic.ImportContracts --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "php" ]; then
   cd "$PHP_CLI_DIR"
   build_args ARGS "$PDF_PATH"
