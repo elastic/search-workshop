@@ -147,8 +147,15 @@ elif [ "$SELECTED_CLIENT" = "dotnet" ]; then
   dotnet run --project ImportContracts.csproj -- --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "go" ]; then
   cd "$GO_CLI_DIR"
+
+  # Build Go executable if needed
+  if [ ! -f "import_contracts" ]; then
+    echo "Building Go executable..."
+    go build -tags contracts -o import_contracts
+  fi
+
   build_args ARGS "$PDF_PATH"
-  go run import_contracts.go main.go contracts --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" "${ARGS[@]}"
+  ./import_contracts --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "java" ]; then
   cd "$JAVA_CLI_DIR"
   build_args ARGS "$PDF_PATH"

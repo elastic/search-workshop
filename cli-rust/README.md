@@ -1,6 +1,6 @@
 # Flight Data Import Script (Rust)
 
-This is a Rust version of the flight import script. It imports flight data from CSV files (including gzipped and zipped files) into Elasticsearch.
+This Rust program imports flight data from CSV files (including gzipped and zipped files) into Elasticsearch.
 
 ## Building
 

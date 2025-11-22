@@ -144,9 +144,9 @@ Indices are created based on the flight date:
 - **Apache Commons CSV**: CSV file parsing
 - **SLF4J**: Logging
 
-## Differences from Ruby Version
+## Implementation Notes
 
-This Java implementation maintains feature parity with the Ruby version while leveraging Java-specific features:
+This Java implementation leverages Java-specific features:
 
 - Uses Maven for dependency management
 - Leverages Java's built-in GZIP and ZIP support

@@ -1,6 +1,6 @@
 # Elasticsearch Flight Data Importer (Go)
 
-This is a Go port of the Ruby flight data importer script. It imports flight data from CSV files into Elasticsearch.
+This Go program imports flight data from CSV files into Elasticsearch.
 
 ## Features
 
@@ -20,11 +20,21 @@ This is a Go port of the Ruby flight data importer script. It imports flight dat
 
 ## Installation
 
+Build the flights import executable:
 ```bash
 cd cli-go
 go mod download
 go build -o import_flights
 ```
+
+Build the contracts import executable:
+```bash
+go build -tags contracts -o import_contracts
+```
+
+Both executables share common code from `main.go` but have separate entry points:
+- `main_flights.go` - Entry point for `import_flights` (built by default)
+- `main_contracts.go` - Entry point for `import_contracts` (built with `-tags contracts`)
 
 ## Usage
 
@@ -87,11 +97,10 @@ ssl_verify: true
 headers: {}
 ```
 
-## Differences from Ruby Version
+## Implementation Notes
 
 - Uses the official Elasticsearch Go client (`github.com/elastic/go-elasticsearch/v8`)
-- Some error messages may differ slightly due to Go's error handling
-- Command-line flag parsing uses Go's `flag` package (slightly different syntax than Ruby's OptionParser)
+- Command-line flag parsing uses Go's `flag` package
 
 ## License
 

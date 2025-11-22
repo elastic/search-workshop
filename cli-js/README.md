@@ -1,6 +1,6 @@
 # Flight Data Import Script (JavaScript)
 
-This is a JavaScript/Node.js version of the Ruby flight import script. It imports flight data from CSV files (including gzipped and zipped files) into Elasticsearch.
+This JavaScript/Node.js program imports flight data from CSV files (including gzipped and zipped files) into Elasticsearch.
 
 ## Installation
 
