@@ -28,7 +28,7 @@ class ElasticsearchClient
 
   def index_exists?(name)
     @client.indices.exists(index: name)
-  rescue Elasticsearch::Transport::Transport::Error => e
+  rescue Elastic::Transport::Transport::Error => e
     if e.message.include?('Connection refused') || e.message.include?('timeout')
       raise "Cannot connect to Elasticsearch at #{@endpoint}: #{e.message}. Please check your endpoint configuration and network connectivity."
     end
@@ -38,9 +38,9 @@ class ElasticsearchClient
   def create_index(name, mapping)
     @client.indices.create(index: name, body: mapping)
     @logger.info("Index '#{name}' created")
-  rescue Elasticsearch::Transport::Transport::Errors::Conflict => e
+  rescue Elastic::Transport::Transport::Errors::Conflict => e
     @logger.warn("Index '#{name}' already exists (conflict)")
-  rescue Elasticsearch::Transport::Transport::Error => e
+  rescue Elastic::Transport::Transport::Error => e
     if e.message.include?('Connection refused') || e.message.include?('timeout')
       raise "Cannot connect to Elasticsearch at #{@endpoint}: #{e.message}. Please check your endpoint configuration and network connectivity."
     end
@@ -53,22 +53,22 @@ class ElasticsearchClient
     # The index parameter is kept for backward compatibility but ignored when _index is in payload
     result = @client.bulk(body: payload, refresh: refresh)
     result
-  rescue Elasticsearch::Transport::Transport::Error => e
+  rescue Elastic::Transport::Transport::Error => e
     raise "Bulk request failed: #{e.message}"
   end
 
   def cluster_health
     @client.cluster.health
-  rescue Elasticsearch::Transport::Transport::Error => e
+  rescue Elastic::Transport::Transport::Error => e
     raise "Cluster health request failed: #{e.message}"
   end
 
   def delete_index(name)
     @client.indices.delete(index: name)
     true
-  rescue Elasticsearch::Transport::Transport::Errors::NotFound => e
+  rescue Elastic::Transport::Transport::Errors::NotFound => e
     false
-  rescue Elasticsearch::Transport::Transport::Error => e
+  rescue Elastic::Transport::Transport::Error => e
     raise "Index deletion failed: #{e.message}"
   end
 
@@ -76,7 +76,7 @@ class ElasticsearchClient
     response = @client.cat.indices(format: 'json', index: pattern)
     # The cat API returns an array of hashes
     response.map { |idx| idx['index'] }.compact
-  rescue Elasticsearch::Transport::Transport::Error => e
+  rescue Elastic::Transport::Transport::Error => e
     raise "Failed to list indices: #{e.message}"
   end
 
