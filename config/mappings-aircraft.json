@@ -71,6 +71,10 @@
       "COUNTRY": {
         "type": "keyword"
       },
+      "@timestamp": {
+        "type": "date",
+        "format": "yyyyMMdd"
+      },
       "LAST_ACTION_DATE": {
         "type": "date",
         "format": "yyyyMMdd"
@@ -156,6 +160,62 @@
       },
       "MODE_S_CODE_HEX": {
         "type": "keyword"
+      },
+      "Model_MFR": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "Model_MODEL": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "Model_TYPE_ACFT": {
+        "type": "keyword"
+      },
+      "Model_TYPE_ENG": {
+        "type": "keyword"
+      },
+      "Model_AC_CAT": {
+        "type": "keyword"
+      },
+      "Model_BUILD_CERT_IND": {
+        "type": "keyword"
+      },
+      "Model_NO_ENG": {
+        "type": "integer"
+      },
+      "Model_NO_SEATS": {
+        "type": "integer"
+      },
+      "Model_AC_WEIGHT": {
+        "type": "keyword"
+      },
+      "Model_SPEED": {
+        "type": "integer"
+      },
+      "Model_TC_DATA_SHEET": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "Model_TC_DATA_HOLDER": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
       }
     }
   }

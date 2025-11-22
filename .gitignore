@@ -4,6 +4,7 @@
 # Ignore data loads
 /data/flights-*
 /data/aircraft.csv.gz
+/data/models.csv.gz
 
 # Custom
 .DS_Store

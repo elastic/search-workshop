@@ -1,0 +1,71 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1,
+    "index.refresh_interval": "5s"
+  },
+  "mappings": {
+    "properties": {
+      "id": {
+        "type": "integer"
+      },
+      "name": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "city": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "country": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "iata": {
+        "type": "keyword"
+      },
+      "icao": {
+        "type": "keyword"
+      },
+      "latitude": {
+        "type": "float"
+      },
+      "longitude": {
+        "type": "float"
+      },
+      "location": {
+        "type": "geo_point"
+      },
+      "altitude": {
+        "type": "integer"
+      },
+      "timezone_offset": {
+        "type": "float"
+      },
+      "dst": {
+        "type": "keyword"
+      },
+      "timezone": {
+        "type": "keyword"
+      },
+      "type": {
+        "type": "keyword"
+      },
+      "source": {
+        "type": "keyword"
+      }
+    }
+  }
+}

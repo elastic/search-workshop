@@ -31,3 +31,24 @@ curl -X POST "http://localhost:5601/api/data_views/data_view" \
       "timeFieldName": "@timestamp"
     }
   }'
+curl -X POST "http://localhost:5601/api/data_views/data_view" \
+  -H 'kbn-xsrf: true' \
+  -H 'Content-Type: application/json' \
+  -u elastic:elastic \
+  -d '{
+    "data_view": {
+      "name": "aircraft",
+      "title": "aircraft",
+      "timeFieldName": "@timestamp"
+    }
+  }'
+curl -X POST "http://localhost:5601/api/data_views/data_view" \
+  -H 'kbn-xsrf: true' \
+  -H 'Content-Type: application/json' \
+  -u elastic:elastic \
+  -d '{
+    "data_view": {
+      "name": "airports",
+      "title": "airports"
+    }
+  }'

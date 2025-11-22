@@ -523,7 +523,7 @@ def show_help
 
     DESCRIPTION
         Extracts specified fields from flight data zip files and outputs them to a
-        compressed CSV file. The fields to extract are defined in fields-flights.json.
+        compressed CSV file. The fields to extract are defined in data/sample-flight.json.
 
         Source files are read from ~/data/flights/raw/
         Output files are written to the workspace data/ directory.
@@ -556,7 +556,7 @@ def show_help
             #{$PROGRAM_NAME} 2023 12
 
     SEE ALSO
-        fields-flights.json         Defines which fields to extract from the flight data
+        data/sample-flight.json     Defines which fields to extract from the flight data
   HELP
 end
 
@@ -584,7 +584,7 @@ def main(argv)
   # Resolve paths relative to the workspace root (two levels up from bin/ruby/)
   workspace_root = File.expand_path('../..', __dir__)
   
-  fields_json_path = File.join(workspace_root, 'fields-flights.json')
+  fields_json_path = File.join(workspace_root, 'data', 'sample-flight.json')
   input_dir = File.expand_path('~/data/flights/raw/')
   output_dir = File.join(workspace_root, 'data')
 
