@@ -730,7 +730,14 @@ class FlightLoader
     {
         $basename = basename($filePath);
         // Remove extensions (.gz, .csv, .zip) - handle multiple extensions like .csv.gz
-        $basename = preg_replace('/\.(gz|csv|zip)$/i', '', $basename);
+        // Keep removing extensions until no more match
+        while (true) {
+            $newBasename = preg_replace('/\.(gz|csv|zip)$/i', '', $basename);
+            if ($newBasename === $basename) {
+                break;
+            }
+            $basename = $newBasename;
+        }
 
         // Try pattern: flights-YYYY-MM (e.g., flights-2024-07)
         if (preg_match('/-(\d{4})-(\d{2})$/', $basename, $matches)) {

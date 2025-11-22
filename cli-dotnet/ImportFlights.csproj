@@ -5,7 +5,16 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="FlightLoader.cs" />
+    <Compile Include="ElasticsearchClientWrapper.cs" />
+    <Compile Include="LookupClasses.cs" />
+    <Compile Include="ContractsLogging.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Elastic.Clients.Elasticsearch" Version="8.15.0" />

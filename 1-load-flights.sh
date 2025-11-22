@@ -160,7 +160,7 @@ if [ "$SELECTED_CLIENT" = "ruby" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  bundle exec ruby import_flights.rb --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  bundle exec ruby import_flights.rb --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "python" ]; then
   cd "$PYTHON_CLI_DIR"
 
@@ -196,7 +196,7 @@ elif [ "$SELECTED_CLIENT" = "python" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  python3 import_flights.py --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  python3 import_flights.py --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "go" ]; then
   cd "$GO_CLI_DIR"
 
@@ -224,7 +224,7 @@ elif [ "$SELECTED_CLIENT" = "go" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  ./import_flights --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  ./import_flights --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "rust" ]; then
   cd "$RUST_CLI_DIR"
 
@@ -252,7 +252,7 @@ elif [ "$SELECTED_CLIENT" = "rust" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "javascript" ]; then
   cd "$JS_CLI_DIR"
 
@@ -280,7 +280,7 @@ elif [ "$SELECTED_CLIENT" = "javascript" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  node import_flights.js --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  node import_flights.js --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "php" ]; then
   cd "$PHP_CLI_DIR"
 
@@ -308,7 +308,7 @@ elif [ "$SELECTED_CLIENT" = "php" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  php import_flights.php --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  php import_flights.php --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "java" ]; then
   cd "$JAVA_CLI_DIR"
 
@@ -336,15 +336,15 @@ elif [ "$SELECTED_CLIENT" = "java" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  java -jar "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  java -jar "$CLIENT_SCRIPT" --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 elif [ "$SELECTED_CLIENT" = "dotnet" ]; then
   cd "$DOTNET_CLI_DIR"
 
   # Restore .NET dependencies if needed
   if [ ! -d "bin" ] || [ ! -f "bin/Debug/net8.0/ImportFlights.dll" ]; then
     echo "Restoring .NET dependencies and building..."
-    dotnet restore
-    dotnet build
+    dotnet restore ImportFlights.csproj
+    dotnet build ImportFlights.csproj
   fi
 
   DEFAULT_ARGS=(--file "$DATA_FILE")
@@ -365,5 +365,5 @@ elif [ "$SELECTED_CLIENT" = "dotnet" ]; then
   [ ${#PASSTHROUGH[@]} -gt 0 ] && ARGS+=("${PASSTHROUGH[@]}")
   [ ${#DEFAULT_ARGS[@]} -gt 0 ] && ARGS+=("${DEFAULT_ARGS[@]}")
 
-  dotnet run -- --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights-2025-07 "${ARGS[@]}"
+  dotnet run --project ImportFlights.csproj -- --config "$CONFIG_FILE" --mapping "$MAPPING_FILE" --index flights "${ARGS[@]}"
 fi
