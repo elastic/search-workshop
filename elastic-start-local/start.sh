@@ -19,7 +19,7 @@ if [ "$available_gb" -lt "$required" ]; then
   # shellcheck disable=SC2034
   read -r line
 fi
-if [ -z "${ES_LOCAL_LICENSE:-}" ] && [ "$today" -gt 1764884064 ]; then
+if [ -z "${ES_LOCAL_LICENSE:-}" ] && [ "$today" -gt 1798760191 ]; then
   echo "---------------------------------------------------------------------"
   echo "The one-month trial period has expired. You can continue using the"
   echo "Free and open Basic license or request to extend the trial for"
@@ -34,7 +34,7 @@ if [ -z "${ES_LOCAL_LICENSE:-}" ] && [ "$today" -gt 1764884064 ]; then
   if [ "$result" = "200" ]; then
     echo "✅ Basic license successfully installed"
     echo "ES_LOCAL_LICENSE=basic" >> .env
-  else 
+  else
     echo "Error: I cannot update the license"
     result=$(curl -s -X GET "${ES_LOCAL_URL}" -H "Authorization: ApiKey ${ES_LOCAL_API_KEY}" -o /dev/null -w '%{http_code}\n')
     if [ "$result" != "200" ]; then
